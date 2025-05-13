@@ -5,6 +5,7 @@ go 1.23.0
 require (
 	github.com/go-faster/errors v0.7.1
 	github.com/go-faster/jx v1.1.0
+	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/lib/pq v1.10.9
 	github.com/ogen-go/ogen v1.12.0
 	github.com/rs/cors v1.11.1

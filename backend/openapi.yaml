@@ -99,9 +99,13 @@ components:
       type: object
       required:
         - message
+        - token
       properties:
         message:
           type: string
+        token:
+          type: string
+      
 
     ErrorResponse:
       type: object

@@ -2,13 +2,87 @@ package handlers
 
 import (
 	gen "backend/api/gen" // 保持不变
+	"backend/utils"
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log"
 
 	"golang.org/x/crypto/bcrypt"
+	//JWT的核心代码
 )
+
+type Server struct {
+	DB *sql.DB
+}
+
+func (s *Server) SignupPost(ctx context.Context, req *gen.SignupRequest) (gen.SignupPostRes, error) {
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = s.DB.ExecContext(ctx,
+		"INSERT INTO users (username, password_hash) VALUES ($1, $2)",
+		req.Username, string(hashedPassword))
+	if err != nil {
+		return nil, err
+	}
+
+	return &gen.SignupResponse{
+		Message: gen.OptString{
+			Set:   true,
+			Value: "注册成功",
+		},
+	}, nil
+}
+
+func (s *Server) LoginPost(ctx context.Context, req *gen.LoginRequest) (gen.LoginPostRes, error) {
+	log.Println("LoginPost called!")
+
+	var storedHash string
+	err := s.DB.QueryRowContext(ctx,
+		"SELECT password_hash FROM users WHERE username = $1",
+		req.Username).Scan(&storedHash)
+
+	if err == sql.ErrNoRows {
+		return nil, errors.New("用户不存在")
+	} else if err != nil {
+		return nil, err
+	}
+
+	err = bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(req.Password))
+	if err != nil {
+		return nil, errors.New("密码错误")
+	}
+
+	// ⬇️ 生成 JWT
+	token, err := utils.GenerateJWT(req.Username)
+	if err != nil {
+		return nil, errors.New("生成 token 失败")
+	}
+
+	fmt.Println("✅ 生成的 JWT token:", token)
+
+	// ⬇️ 返回 token 给前端
+	return &gen.LoginResponse{
+		Message: "登录成功",
+		Token:   token, // 你需要在 OpenAPI 中定义 token 字段（或在前端手动处理）
+	}, nil
+	// return &gen.LoginResponse{
+	// 	Message: "登录成功",
+	// }, nil
+}
+
+func (s *Server) NewError(ctx context.Context, err error) *gen.ErrorResponseStatusCode {
+	return &gen.ErrorResponseStatusCode{
+		StatusCode: 500,
+		Response: gen.ErrorResponse{
+			Message: err.Error(),
+		},
+	}
+}
 
 // // // 定义一个空 struct，专门用来实现接口方法
 // // type signupPostMarker struct{}
@@ -38,10 +112,6 @@ import (
 // // // func NewLoginPostOK(v gen.LoginResponse) gen.LoginPostRes {
 // // // 	return &loginPostOK{LoginResponse: v}
 // // // }
-
-type Server struct {
-	DB *sql.DB
-}
 
 // // // func (s *Server) SignupPost(ctx context.Context, req *gen.SignupRequest) (*gen.SignupResponse, error) {
 // // // 	_, err := s.DB.ExecContext(ctx,
@@ -397,57 +467,3 @@ type Server struct {
 // 	_ gen.LoginPostRes  = (*loginPostOK)(nil)
 // 	_ gen.Handler       = (*Server)(nil)
 // )
-
-func (s *Server) SignupPost(ctx context.Context, req *gen.SignupRequest) (gen.SignupPostRes, error) {
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = s.DB.ExecContext(ctx,
-		"INSERT INTO users (username, password_hash) VALUES ($1, $2)",
-		req.Username, string(hashedPassword))
-	if err != nil {
-		return nil, err
-	}
-
-	return &gen.SignupResponse{
-		Message: gen.OptString{
-			Set:   true,
-			Value: "注册成功",
-		},
-	}, nil
-}
-
-func (s *Server) LoginPost(ctx context.Context, req *gen.LoginRequest) (gen.LoginPostRes, error) {
-	log.Println("LoginPost called!")
-
-	var storedHash string
-	err := s.DB.QueryRowContext(ctx,
-		"SELECT password_hash FROM users WHERE username = $1",
-		req.Username).Scan(&storedHash)
-
-	if err == sql.ErrNoRows {
-		return nil, errors.New("用户不存在")
-	} else if err != nil {
-		return nil, err
-	}
-
-	err = bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(req.Password))
-	if err != nil {
-		return nil, errors.New("密码错误")
-	}
-
-	return &gen.LoginResponse{
-		Message: "登录成功",
-	}, nil
-}
-
-func (s *Server) NewError(ctx context.Context, err error) *gen.ErrorResponseStatusCode {
-	return &gen.ErrorResponseStatusCode{
-		StatusCode: 500,
-		Response: gen.ErrorResponse{
-			Message: err.Error(),
-		},
-	}
-}

@@ -97,6 +97,7 @@ func (s *LoginRequest) SetPassword(val string) {
 // Ref: #/components/schemas/LoginResponse
 type LoginResponse struct {
 	Message string `json:"message"`
+	Token   string `json:"token"`
 }
 
 // GetMessage returns the value of Message.
@@ -104,9 +105,19 @@ func (s *LoginResponse) GetMessage() string {
 	return s.Message
 }
 
+// GetToken returns the value of Token.
+func (s *LoginResponse) GetToken() string {
+	return s.Token
+}
+
 // SetMessage sets the value of Message.
 func (s *LoginResponse) SetMessage(val string) {
 	s.Message = val
+}
+
+// SetToken sets the value of Token.
+func (s *LoginResponse) SetToken(val string) {
+	s.Token = val
 }
 
 func (*LoginResponse) loginPostRes() {}
