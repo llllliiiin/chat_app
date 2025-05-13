@@ -59,9 +59,6 @@
 
 // }
 
-
-
-
 package main
 
 import (
@@ -69,11 +66,13 @@ import (
 	"log"
 	"net/http"
 
-	"backend/gen"
+	gen "backend/api/gen"
 	"backend/handlers"
 
-	"github.com/rs/cors"
+	// "golang.org/x/crypto/bcrypt"//hash化
+
 	_ "github.com/lib/pq"
+	"github.com/rs/cors"
 )
 
 func main() {
@@ -82,13 +81,12 @@ func main() {
 	if err != nil {
 		log.Fatal("数据库连接失败:", err)
 	}
-	
+
 	err = db.Ping()
 	if err != nil {
 		log.Fatal("❌ 数据库连接失败:", err)
 	}
 
-	
 	// 👇 你的 handler 实现 ServerInterface（包含 Signup 方法）
 	s := &handlers.Server{DB: db}
 

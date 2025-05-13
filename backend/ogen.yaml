@@ -1,0 +1,7 @@
+schema: openapi.yaml
+
+generate:
+  target: backend/api/gen
+  package: api
+  clean: true
+  operation-response-types: true

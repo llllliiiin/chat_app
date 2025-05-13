@@ -14,8 +14,17 @@ services:
     build: ./frontend
     ports:
       - "3001:3000"
+    # volumes:
+    #   - ./frontend:/app
     volumes:
       - ./frontend:/app
+      - /app/node_modules 
+    # volumes:
+    #   - type: bind
+    #     source: ./frontend
+    #     target: /app
+    #     volume:
+    #       nocopy: true
     working_dir: /app
     command: npm run dev
 
