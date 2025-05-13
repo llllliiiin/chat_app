@@ -9,6 +9,11 @@ RUN go mod download
 RUN go install github.com/air-verse/air@latest
 
 COPY . .
+# # 自动运行 ogen 生成代码
+# RUN go run github.com/ogen-go/ogen/cmd/ogen@latest --target api/gen --clean openapi.yaml
+
+# # 安装 air（热重载）
+# RUN go install github.com/air-verse/air@latest
 
 EXPOSE 8080
 
