@@ -234,10 +234,15 @@ func (s *LoginResponse) encodeFields(e *jx.Encoder) {
 		e.FieldStart("message")
 		e.Str(s.Message)
 	}
+	{
+		e.FieldStart("token")
+		e.Str(s.Token)
+	}
 }
 
-var jsonFieldsNameOfLoginResponse = [1]string{
+var jsonFieldsNameOfLoginResponse = [2]string{
 	0: "message",
+	1: "token",
 }
 
 // Decode decodes LoginResponse from json.
@@ -261,6 +266,18 @@ func (s *LoginResponse) Decode(d *jx.Decoder) error {
 			}(); err != nil {
 				return errors.Wrap(err, "decode field \"message\"")
 			}
+		case "token":
+			requiredBitSet[0] |= 1 << 1
+			if err := func() error {
+				v, err := d.Str()
+				s.Token = string(v)
+				if err != nil {
+					return err
+				}
+				return nil
+			}(); err != nil {
+				return errors.Wrap(err, "decode field \"token\"")
+			}
 		default:
 			return d.Skip()
 		}
@@ -271,7 +288,7 @@ func (s *LoginResponse) Decode(d *jx.Decoder) error {
 	// Validate required fields.
 	var failures []validate.FieldError
 	for i, mask := range [1]uint8{
-		0b00000001,
+		0b00000011,
 	} {
 		if result := (requiredBitSet[i] & mask) ^ mask; result != 0 {
 			// Mask only required fields and check equality to mask using XOR.

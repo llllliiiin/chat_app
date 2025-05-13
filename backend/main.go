@@ -1,3 +1,46 @@
+package main
+
+import (
+	"database/sql"
+	"log"
+	"net/http"
+
+	gen "backend/api/gen"
+	"backend/handlers"
+	"backend/middleware"
+
+	_ "github.com/lib/pq"
+	"github.com/rs/cors"
+	//JWT用
+)
+
+func main() {
+	// db, err := sql.Open("postgres", "host=localhost port=5432 user=user password=password dbname=chat_app_db sslmode=disable")
+	db, err := sql.Open("postgres", "host=db port=5432 user=user password=password dbname=chat_app_db sslmode=disable")
+	if err != nil {
+		log.Fatal("数据库连接失败:", err)
+	}
+
+	err = db.Ping()
+	if err != nil {
+		log.Fatal("❌ 数据库连接失败:", err)
+	}
+
+	// 👇 你的 handler 实现 ServerInterface（包含 Signup 方法）
+	s := &handlers.Server{DB: db}
+
+	handler, err := gen.NewServer(s) // ogen 生成的路由注册器
+	if err != nil {
+		log.Fatal("构建路由失败:", err)
+	}
+
+	protected := middleware.JWTAuthMiddleware(handler)
+
+	log.Println("🚀 服务器启动中: http://localhost:8080")
+	log.Fatal(http.ListenAndServe(":8080", cors.Default().Handler(protected)))
+	// log.Fatal(http.ListenAndServe(":8080", cors.Default().Handler(handler)))
+}
+
 // package main
 
 // import (
@@ -58,43 +101,3 @@
 // 	}
 
 // }
-
-package main
-
-import (
-	"database/sql"
-	"log"
-	"net/http"
-
-	gen "backend/api/gen"
-	"backend/handlers"
-
-	// "golang.org/x/crypto/bcrypt"//hash化
-
-	_ "github.com/lib/pq"
-	"github.com/rs/cors"
-)
-
-func main() {
-	// db, err := sql.Open("postgres", "host=localhost port=5432 user=user password=password dbname=chat_app_db sslmode=disable")
-	db, err := sql.Open("postgres", "host=db port=5432 user=user password=password dbname=chat_app_db sslmode=disable")
-	if err != nil {
-		log.Fatal("数据库连接失败:", err)
-	}
-
-	err = db.Ping()
-	if err != nil {
-		log.Fatal("❌ 数据库连接失败:", err)
-	}
-
-	// 👇 你的 handler 实现 ServerInterface（包含 Signup 方法）
-	s := &handlers.Server{DB: db}
-
-	handler, err := gen.NewServer(s) // ogen 生成的路由注册器
-	if err != nil {
-		log.Fatal("构建路由失败:", err)
-	}
-
-	log.Println("🚀 服务器启动中: http://localhost:8080")
-	log.Fatal(http.ListenAndServe(":8080", cors.Default().Handler(handler)))
-}
