@@ -44,6 +44,8 @@ func main() {
 	r.HandleFunc("/signup", s.SignupHandler).Methods("POST")
 	r.HandleFunc("/login", s.LoginHandler).Methods("POST")
 
+	r.Handle("/get-or-create-room", middleware.JWTAuthMiddleware(http.HandlerFunc(s.GetOrCreateRoomHandler))).Methods("POST")
+
 	//注册受 JWT 保护的 /users 接口，用来获取用户列表。
 	r.Handle("/users", middleware.JWTAuthMiddleware(http.HandlerFunc(s.GetUsersHandler)))
 

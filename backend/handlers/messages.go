@@ -75,28 +75,65 @@ func (s *Server) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "无效 room_id", http.StatusBadRequest)
 		return
 	}
-
+	/////// 🔗 將 `messages.sender_id` 對應到 `users.id` ✅ 拿到發送者的 `username`（而不是只有數字 ID）
 	rows, err := s.DB.Query(`
-		SELECT id, room_id, sender_id, content, created_at, updated_at, thread_root_id
-		FROM messages
-		WHERE room_id = $1
-		ORDER BY created_at ASC
+		SELECT 
+			m.id, m.room_id, m.sender_id, u.username, 
+			m.content, m.created_at, m.updated_at, m.thread_root_id
+		FROM messages m
+		JOIN users u ON m.sender_id = u.id
+		WHERE m.room_id = $1
+		ORDER BY m.created_at ASC
 	`, roomID)
+	// if err != nil {
+	// 	http.Error(w, "数据库查询错误", http.StatusInternalServerError)
+	// 	return
+	// }
 	if err != nil {
-		http.Error(w, "数据库查询错误", http.StatusInternalServerError)
+		log.Println("❌ SQL 查詢錯誤:", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "数据库查询错误"})
 		return
 	}
 	defer rows.Close()
 
-	var messages []Message
+	// var messages []Message
+	// for rows.Next() {
+	// 	var msg Message
+	// 	if err := rows.Scan(&msg.ID, &msg.RoomID, &msg.SenderID, &msg.Content, &msg.CreatedAt, &msg.UpdatedAt, &msg.ThreadRootID); err != nil {
+	// 		http.Error(w, "读取数据错误", http.StatusInternalServerError)
+	// 		return
+	// 	}
+	// 	messages = append(messages, msg)
+	// }
+	type MessageResponse struct {
+		ID           int       `json:"id"`
+		RoomID       int       `json:"room_id"`
+		SenderID     int       `json:"sender_id"`
+		Sender       string    `json:"sender"`
+		Content      string    `json:"content"`
+		CreatedAt    time.Time `json:"created_at"`
+		UpdatedAt    time.Time `json:"updated_at"`
+		ThreadRootID *int      `json:"thread_root_id,omitempty"`
+	}
+
+	var messages []MessageResponse
 	for rows.Next() {
-		var msg Message
-		if err := rows.Scan(&msg.ID, &msg.RoomID, &msg.SenderID, &msg.Content, &msg.CreatedAt, &msg.UpdatedAt, &msg.ThreadRootID); err != nil {
-			http.Error(w, "读取数据错误", http.StatusInternalServerError)
+		var msg MessageResponse
+		if err := rows.Scan(
+			&msg.ID, &msg.RoomID, &msg.SenderID, &msg.Sender,
+			&msg.Content, &msg.CreatedAt, &msg.UpdatedAt, &msg.ThreadRootID,
+		); err != nil {
+			log.Println("❌ 資料掃描失敗:", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "读取数据错误"})
 			return
 		}
 		messages = append(messages, msg)
 	}
 
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"messages": messages})
 }
