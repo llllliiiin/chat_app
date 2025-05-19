@@ -1,0 +1,27 @@
+# ベースイメージ
+FROM node:22
+
+# 作業ディレクトリ
+WORKDIR /app
+
+# 依存関係のインストール
+COPY package*.json ./
+RUN npm install
+
+# その他全ファイルをコピー
+COPY . .
+
+# ⚠️ 构建 Tailwind CSS + Next.js 静态资源（如果使用 export 模式）
+# 可选：如果你使用 next export，可以启用：
+RUN npm run build
+
+
+# 4. 安装依赖，包括 Tailwind、PostCSS、Autoprefixer
+RUN npm install \
+  && npm install -D tailwindcss postcss autoprefixer
+
+# 開発用ポートを公開
+EXPOSE 3000
+
+# 開発サーバー起動
+CMD ["npm", "run", "dev"]
