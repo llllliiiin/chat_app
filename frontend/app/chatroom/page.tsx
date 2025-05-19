@@ -21,6 +21,34 @@ export default function ChatRoomListPage() {
 
   const defaultGroupNames = ["ルーム1", "ルーム2", "ルーム3"];
 
+  // ✅ 初始化：從後端獲取所有已存在的 group 房間，對照預設名稱，取得未讀訊息
+  const fetchRoomsAndUnreadCounts = async () => {
+    if (!token) return;
+    const res = await fetch("http://localhost:8081/rooms", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (!res.ok) return;
+    const allRooms: RoomInfo[] = await res.json();
+    if (!Array.isArray(allRooms)) return;
+
+    const matchedRooms: RoomInfo[] = allRooms.filter(
+      room => defaultGroupNames.includes(room.room_name) && room.is_group
+    );
+
+    setGroupRooms(matchedRooms);
+
+    const counts: Record<number, number> = {};
+    for (const room of matchedRooms) {
+      const res = await fetch(`http://localhost:8081/rooms/${room.id}/unread-count`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      counts[room.id] = data.unread_count;
+    }
+    setUnreadCounts(counts);
+  };
+
   useEffect(() => {
     const tk = sessionStorage.getItem("token");
     if (!tk) {
@@ -28,42 +56,43 @@ export default function ChatRoomListPage() {
       return;
     }
     setToken(tk);
-
-    fetch("http://localhost:8081/rooms", {
-      headers: { Authorization: `Bearer ${tk}` },
-    })
-      .then((res) => res.json())
-      .then((data: RoomInfo[]) => {
-        const filtered = data.filter((room) => room.is_group);
-        setGroupRooms(filtered);
-      });
   }, [router]);
+
+  useEffect(() => {
+    if (token) {
+      fetchRoomsAndUnreadCounts();
+      const interval = setInterval(fetchRoomsAndUnreadCounts, 10000); // 每 10 秒輪詢一次
+      return () => clearInterval(interval);
+    }
+  }, [token]);
 
   const handleDefaultGroupClick = async (roomName: string) => {
     if (!token) return;
-    const existing = groupRooms.find((r) => r.room_name === roomName);
+    let existing = groupRooms.find((r) => r.room_name === roomName);
     if (existing) {
+      setUnreadCounts((prev) => ({ ...prev, [existing.id]: 0 })); // 點擊後立即清除紅點
       router.push(`/chatroom/group?room_id=${existing.id}`);
       return;
-    }
-
-    const res = await fetch("http://localhost:8081/create-group-room", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        room_name: roomName,
-        user_ids: [],
-      }),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      router.push(`/chatroom/group?room_id=${data.room_id}`);
     } else {
-      alert("群組建立失敗");
+      // 尚未建立則立即建立後跳轉
+      const res = await fetch("http://localhost:8081/create-group-room", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          room_name: roomName,
+          user_ids: [],
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        router.push(`/chatroom/group?room_id=${data.room_id}`);
+      } else {
+        alert("群組建立失敗");
+      }
     }
   };
 
@@ -96,30 +125,10 @@ export default function ChatRoomListPage() {
     const room = groupRooms.find((r) => r.id === roomId);
     if (room && room.is_group) {
       router.push(`/chatroom/group?room_id=${room.id}`);
-      // router.push(`/chatroom/${roomId}/group`);
     } else {
       router.push(`/chatroom/${roomId}`);
     }
   };
-/////////////////////////////
-  useEffect(() => {
-    if (!token || groupRooms.length === 0) return;
-
-    const fetchUnreadCounts = async () => {
-      const counts: Record<number, number> = {};
-      for (const room of groupRooms) {
-        const res = await fetch(`http://localhost:8081/rooms/${room.id}/unread-count`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const data = await res.json();
-        counts[room.id] = data.unread_count;
-      }
-      setUnreadCounts(counts);
-    };
-
-    fetchUnreadCounts();
-  }, [groupRooms, token]);
-/////////////////////////////
 
   return (
     <div className="h-screen flex flex-col">
@@ -179,29 +188,22 @@ export default function ChatRoomListPage() {
               </button>
             </h4>
             <ul className="space-y-3">
-              {defaultGroupNames.map((name, idx) => (
-                <li
-                  key={name}
-                  onClick={() => handleDefaultGroupClick(name)}
-                  className="p-4 bg-white rounded shadow hover:bg-gray-200 cursor-pointer text-[#2e8b57]"
-                >
-                  {name}
-                </li>
-              ))}
-              {groupRooms
-                .filter((r) => !defaultGroupNames.includes(r.room_name))
-                .map((room) => (
+              {defaultGroupNames.map((name) => {
+                const room = groupRooms.find((r) => r.room_name === name);
+                const hasUnread = room && unreadCounts[room.id] > 0;
+                return (
                   <li
-                    key={room.id}
-                    onClick={() => handleRoomClick(room.id)}
+                    key={name}
+                    onClick={() => handleDefaultGroupClick(name)}
                     className="relative p-4 bg-white rounded shadow hover:bg-gray-200 cursor-pointer text-[#2e8b57]"
                   >
-                    {room.room_name || `グループルーム ${room.id}`}
-                    {unreadCounts && unreadCounts[room.id] > 0 && (
-                      <span className="absolute right-2 top-2 w-2 h-2 bg-red-500 rounded-full"></span>
+                    {name}
+                    {hasUnread && (
+                      <span className="absolute right-3 top-3 w-2.5 h-2.5 bg-red-500 rounded-full shadow"></span>
                     )}
                   </li>
-                ))}
+                );
+              })}
             </ul>
           </div>
         </div>

@@ -1,6 +1,7 @@
 "use client";
 import { useParams, useRouter,useSearchParams } from "next/navigation";
 import { useEffect, useState, useRef} from "react";
+///在 app/ router 中，useSearchParams() 是一個 只能在 client 元件使用的 Hook，並且必須包在 <Suspense> 裡面使用，否則在 prerender 階段就會報錯（就像你現在看到的情況）。
 
 
 
@@ -194,11 +195,15 @@ export default function GroupChatRoomContent() {
                   <div className={`p-2 rounded-lg max-w-xs ${isSender ? "bg-blue-500" : "bg-green-700"} text-white`}>
                     <div className="text-xs font-semibold mb-1">{msg.sender}</div>
                     <div>{msg.content}</div>
-                    {isSender && (
-                      <div className="text-[10px] mt-1 text-right">
-                        {readers.length === 0 ? "未読" : `已読 ${readers.length}人`}
-                      </div>
-                    )}
+                    <div className="text-[10px] mt-1 text-right">
+                      {readers.length === 0
+                        ? "未読"
+                        : `已読 ${readers.length}人: ${readers.join(", ")}`}
+                    </div>
+
+                    {/* <div className="text-[10px] mt-1 text-right">
+                      {readers.length === 0 ? "未読" : `已読 ${readers.length}人`}
+                    </div> */}
                   </div>
                 </div>
               );
