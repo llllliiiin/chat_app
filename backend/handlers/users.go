@@ -11,23 +11,22 @@ type UserListResponse struct {
 
 // 结构体中已经有 DB 引用
 func (s *Server) GetUsersHandler(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.DB.Query("SELECT username FROM users")
+	rows, err := s.DB.Query("SELECT username FROM users") // rows 是回傳的結果集合 resultset
 	if err != nil {
 		http.Error(w, "数据库查询失败", http.StatusInternalServerError)
 		return
 	}
-	defer rows.Close()
+	defer rows.Close() // 只有 query 的時候需要，因為回傳了 rows，需要手動關閉
 
 	var users []string
 	for rows.Next() {
-		var username string
+		var username string // 把 username 暫存放進 username 變數
 		if err := rows.Scan(&username); err != nil {
 			http.Error(w, "解析数据失败", http.StatusInternalServerError)
 			return
 		}
-		users = append(users, username)
+		users = append(users, username) // 將 username 放入 users
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(UserListResponse{Users: users})
 }

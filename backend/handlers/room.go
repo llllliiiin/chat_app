@@ -40,11 +40,11 @@ func (s *Server) GetOrCreateRoomHandler(w http.ResponseWriter, r *http.Request) 
 	// 查詢是否已有這兩人參與、且為 is_group = false 的房間
 	var roomID int
 	query := `
-	SELECT cr.id FROM chat_rooms cr
-	JOIN room_members rm1 ON cr.id = rm1.room_id AND rm1.user_id = $1
-	JOIN room_members rm2 ON cr.id = rm2.room_id AND rm2.user_id = $2
-	WHERE cr.is_group = false
-	LIMIT 1;
+		SELECT cr.id FROM chat_rooms cr
+		JOIN room_members rm1 ON cr.id = rm1.room_id AND rm1.user_id = $1
+		JOIN room_members rm2 ON cr.id = rm2.room_id AND rm2.user_id = $2
+		WHERE cr.is_group = false
+		LIMIT 1;
 	`
 	err = s.DB.QueryRow(query, userIDs[0], userIDs[1]).Scan(&roomID)
 

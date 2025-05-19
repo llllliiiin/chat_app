@@ -31,7 +31,7 @@ func (s *Server) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var userID int /////////////////全部加入userid
+	var userID int ///////////// 全部加入 userID
 	var storedHash string
 	err := s.DB.QueryRow("SELECT id, password_hash FROM users WHERE username = $1", req.Username).Scan(&userID, &storedHash)
 	if err == sql.ErrNoRows {
@@ -47,7 +47,7 @@ func (s *Server) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := utils.GenerateJWT(userID, req.Username) //////全部加入userid
+	token, err := utils.GenerateJWT(userID, req.Username) ////// 全部加入 userID
 	if err != nil {
 		http.Error(w, "生成 token 失败", http.StatusInternalServerError)
 		return
