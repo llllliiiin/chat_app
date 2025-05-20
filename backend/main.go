@@ -56,8 +56,14 @@ func main() {
 	r.Handle("/rooms/{room_id}/unread-count", middleware.JWTAuthMiddleware(http.HandlerFunc(s.GetUnreadMessageCountHandler))).Methods("GET")
 	r.Handle("/messages/{message_id}/readers", middleware.JWTAuthMiddleware(http.HandlerFunc(s.GetMessageReadsHandler))).Methods("GET")
 
+	//////爲了更新進入房間時的狀態
+	r.Handle("/rooms/{room_id}/enter", middleware.JWTAuthMiddleware(http.HandlerFunc(s.EnterRoomHandler))).Methods("POST")
+
+	////用來建立一個websockethub的實例
 	hub := handlers.NewHub()
+	///Goroutine 就是 Go 的並發（concurrent）機制，讓你可以「同時做很多事」，而且非常輕量。
 	go hub.Run()
+	///把剛建立的 hub 存進 Server 結構的 WSHub 欄位中。
 	s.WSHub = hub // 新增一行：綁定到 Server 結構體
 
 	r.HandleFunc("/ws", s.WebSocketHandler(hub))
