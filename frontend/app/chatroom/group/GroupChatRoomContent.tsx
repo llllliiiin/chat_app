@@ -26,6 +26,12 @@ export default function GroupChatRoomContent() {
   useEffect(() => {
     const current = sessionStorage.getItem("currentUser");
     const tk = sessionStorage.getItem("token");
+    ////////////////////////////////////////////
+
+///////////////////////////////////////////////
+
+
+
     if (!current || !tk) {
       router.push("/login");
       return;
@@ -69,7 +75,16 @@ export default function GroupChatRoomContent() {
         setMessages(msgs);
       });
   }, [roomId, token]);
+  useEffect(() => {
+    if (!token || !roomId) return;
 
+    fetch(`http://localhost:8081/rooms/${roomId}/enter`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+  }, [roomId, token]);
   /////////////////websocket
     useEffect(() => {
     if (!roomId) return;
@@ -77,7 +92,9 @@ export default function GroupChatRoomContent() {
     const ws = new WebSocket(`ws://localhost:8081/ws?room_id=${roomId}`);
 
     ws.onmessage = (event) => {
+      ///將 JSON 格式的字串「解析」（parse）成 JavaScript 物件。
       const parsed = JSON.parse(event.data);
+
       if (parsed.type === "new_message" && parsed.message) {
         setMessages((prev) => [
           ...prev,
@@ -94,11 +111,22 @@ export default function GroupChatRoomContent() {
       console.log("✅ WebSocket 連線成功");
     };
     //因爲hotreloading的原因，會在上一個websocket尚未鏈接的時候被取消，只是開發的問題，吧這個error屏蔽掉就可以了
+    
     ws.onerror = (event) => {
-      const maybeError = event as unknown as { message?: string };
-      if (maybeError.message?.includes("closed before")) return;
       console.error("❌ WebSocket 錯誤", event);
-    };
+
+      // 如果你真的要檢查 message，應該這樣做：
+      if ("message" in event && typeof (event as any).message === "string") {
+        const msg = (event as any).message;
+        if (msg.includes("closed before")) return;
+        console.error("🚨 詳細錯誤", msg);
+      }
+};
+    // ws.onerror = (event) => {
+    //   const maybeError = event as unknown as { message?: string };
+    //   if (maybeError.message?.includes("closed before")) return;
+    //   console.error("❌ WebSocket 錯誤", event);
+    // };
 
     ws.onclose = () => {
       console.log("🔌 WebSocket 已關閉");
@@ -122,6 +150,10 @@ export default function GroupChatRoomContent() {
         });
       }
     });
+
+
+
+
 ////////////////////////////////
     const fetchReads = async () => {
       ////定義一個以 K 為 key、V 為 value 的對應表（map 或 dictionary）。
