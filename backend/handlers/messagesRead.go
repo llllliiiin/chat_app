@@ -25,7 +25,7 @@ func (s *Server) MarkMessageAsReadHandler(w http.ResponseWriter, r *http.Request
 		http.Error(w, "無效訊息 ID", http.StatusBadRequest)
 		return
 	}
-
+	////如果已經存在，就更新成爲現在的時間
 	_, err = s.DB.Exec(`
 		INSERT INTO message_reads (message_id, user_id, read_at)
 		VALUES ($1, $2, NOW())
@@ -60,6 +60,7 @@ func (s *Server) GetUnreadMessageCountHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	var count int
+	///查詢還沒有被閲讀的數量
 	err = s.DB.QueryRow(`
 		SELECT COUNT(*)
 		FROM messages m
@@ -70,6 +71,7 @@ func (s *Server) GetUnreadMessageCountHandler(w http.ResponseWriter, r *http.Req
 			WHERE mr.message_id = m.id AND mr.user_id = $2
 		)
 	`, roomID, userID).Scan(&count)
+	////查詢這段資料有沒有被使用者讀過，則exist，如果沒有，則no exist
 	if err != nil {
 		http.Error(w, "查詢失敗", http.StatusInternalServerError)
 		return

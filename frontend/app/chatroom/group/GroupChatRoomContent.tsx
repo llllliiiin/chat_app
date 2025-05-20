@@ -78,7 +78,7 @@ export default function GroupChatRoomContent() {
     if (!messages || !token || !currentUser) return;
     messages.forEach((msg) => {
       if (msg.sender !== currentUser) {
-        fetch(`http://localhost:8081/messages/${msg.id}/read`, {
+        fetch(`http://localhost:8081/messages/${msg.id}/markread`, {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -86,9 +86,10 @@ export default function GroupChatRoomContent() {
     });
 ////////////////////////////////
     const fetchReads = async () => {
+      ////一個以 K 為 key、V 為 value 的對應表（map 或 dictionary）。
       const result: Record<number, string[]> = {};
       for (const msg of messages) {
-        const res = await fetch(`http://localhost:8081/messages/${msg.id}/reads`, {
+        const res = await fetch(`http://localhost:8081/messages/${msg.id}/readers`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = await res.json();
