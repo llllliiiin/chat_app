@@ -56,6 +56,12 @@ func main() {
 	r.Handle("/rooms/{room_id}/unread-count", middleware.JWTAuthMiddleware(http.HandlerFunc(s.GetUnreadMessageCountHandler))).Methods("GET")
 	r.Handle("/messages/{message_id}/readers", middleware.JWTAuthMiddleware(http.HandlerFunc(s.GetMessageReadsHandler))).Methods("GET")
 
+	hub := handlers.NewHub()
+	go hub.Run()
+	s.WSHub = hub // 新增一行：綁定到 Server 結構體
+
+	r.HandleFunc("/ws", s.WebSocketHandler(hub))
+
 	// CORS 設定
 	c := cors.New(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:3000", "http://localhost:3001"},

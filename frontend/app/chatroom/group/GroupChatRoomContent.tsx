@@ -70,6 +70,44 @@ export default function GroupChatRoomContent() {
       });
   }, [roomId, token]);
 
+  /////////////////websocket
+    useEffect(() => {
+    if (!roomId) return;
+
+    const ws = new WebSocket(`ws://localhost:8081/ws?room_id=${roomId}`);
+
+    ws.onmessage = (event) => {
+      const parsed = JSON.parse(event.data);
+      if (parsed.type === "new_message" && parsed.message) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: parsed.message.id ?? Date.now(),
+            content: parsed.message.content,
+            sender: parsed.message.sender,
+          }
+        ]);
+      }
+    };
+
+    ws.onopen = () => {
+      console.log("✅ WebSocket 連線成功");
+    };
+    //因爲hotreloading的原因，會在上一個websocket尚未鏈接的時候被取消，只是開發的問題，吧這個error屏蔽掉就可以了
+    ws.onerror = (event) => {
+      const maybeError = event as unknown as { message?: string };
+      if (maybeError.message?.includes("closed before")) return;
+      console.error("❌ WebSocket 錯誤", event);
+    };
+
+    ws.onclose = () => {
+      console.log("🔌 WebSocket 已關閉");
+    };
+
+    return () => ws.close(); // 清理
+  }, [roomId]);
+//////////////////////////////
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -86,7 +124,7 @@ export default function GroupChatRoomContent() {
     });
 ////////////////////////////////
     const fetchReads = async () => {
-      ////一個以 K 為 key、V 為 value 的對應表（map 或 dictionary）。
+      ////定義一個以 K 為 key、V 為 value 的對應表（map 或 dictionary）。
       const result: Record<number, string[]> = {};
       for (const msg of messages) {
         const res = await fetch(`http://localhost:8081/messages/${msg.id}/readers`, {
