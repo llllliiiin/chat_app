@@ -18,6 +18,8 @@ export default function UserPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesInputRef = useRef<HTMLInputElement>(null);
 
+  const wsRef = useRef<WebSocket | null>(null);//爲了解決前面的websocket沒有關閉，出現雙重消息的情況
+
   // 初始化：登入驗證與取得用戶清單
   useEffect(() => {
     const currentUser = sessionStorage.getItem("currentUser");
@@ -49,6 +51,56 @@ export default function UserPage() {
       });
   }, []);
 
+
+  ///////web socket建議放在「與 WebSocket 有關的 state（如 token、currentUser、roomId）都已設定完成之後」
+// useEffect：驗證登入、取得使用者列表（✅ 最早）
+// useEffect：根據 roomId 取得歷史訊息（✅ 第二）
+// ✅ 👉 把 WebSocket 的 useEffect 放這裡
+// useEffect：訊息滾動到最底部（不依賴 token，放後面 OK）
+  useEffect(() => {
+    if (!roomId || !token || !currentUser) return;
+
+    const ws = new WebSocket(`ws://localhost:8081/ws?room_id=${roomId}`);
+    
+    // 若已有 socket 先關閉再重新建立
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
+    ws.onopen = () => {
+      console.log("✅ WebSocket 已連線");
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const parsed = JSON.parse(event.data);
+        if (parsed.type === "new_message" && parsed.message) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              content: parsed.message.content,
+              sender: parsed.message.sender === currentUser ? "me" : "other"
+            }
+          ]);
+        }
+      } catch (err) {
+        console.error("❌ WebSocket 訊息解析錯誤", err);
+      }
+    };
+
+    ws.onclose = () => {
+      console.log("🔌 WebSocket 已關閉");
+    };
+
+    ws.onerror = (event) => {
+      console.error("❌ WebSocket 發生錯誤", event);
+    };
+
+    return () => {
+      ws.close();
+    };
+  }, [roomId, token, currentUser]);
+  ///////////////////
+
   // 加載訊息紀錄
   useEffect(() => {
     if (!roomId || !token || !currentUser) return;
@@ -65,6 +117,8 @@ export default function UserPage() {
         setMessages(msgs);
       });
   }, [roomId, token, currentUser]);
+
+
 
   // 自動滾動至最新訊息
   useEffect(() => {
@@ -121,11 +175,11 @@ export default function UserPage() {
       ///此處并沒有await json目的是爲了讓畫面實時更新，顯得流暢，是optimistic UI
       // 把訊息加入本地訊息列表
       ///...是展開原本的messages的意思，再加上新的信息content和sender
-      setMessages([...messages, { content: message, sender: "me" }]);
+      // setMessages([...messages, { content: message, sender: "me" }]);
      //因為這條訊息還 沒經過後端寫入 → 再經過 GET 拉下來 → 再比對 sender。
      // 你只知道： 是你剛打的 是你剛送出的所以它一定來自「你自己」
      // 👉 所以程式 主動指定 sender 為 "me"，來讓畫面能立刻知道它應該靠右顯示、藍色氣泡等。
-      setMessage("");////將輸入欄清空
+      setMessage("");////將輸入欄清空，爲了避免websocket雙重發送的問題，不在上面加setmessages了
     } catch (err) {
       alert("訊息發送失敗");
     }

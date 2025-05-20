@@ -10,7 +10,8 @@ import (
 )
 
 type Server struct {
-	DB *sql.DB
+	DB    *sql.DB
+	WSHub *WebSocketHub
 }
 
 type LoginRequest struct {
