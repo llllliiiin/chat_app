@@ -21,7 +21,7 @@ type RoomMembersResponse struct {
 	Members []string `json:"members"`
 }
 
-// GET /rooms
+// GET /rooms取得用戶參與的所有的聊天室
 func (s *Server) GetUserRoomsHandler(w http.ResponseWriter, r *http.Request) {
 	userID, err := utils.GetUserIDFromToken(r)
 	if err != nil {
@@ -87,7 +87,7 @@ func (s *Server) CreateGroupRoomHandler(w http.ResponseWriter, r *http.Request) 
 
 	memberSet := append(payload.UserIDs, userID)
 	for _, uid := range memberSet {
-		_, _ = s.DB.Exec(`INSERT INTO room_members (room_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, roomID, uid)
+		_, _ = s.DB.Exec(`INSERT INTO room_members (room_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, roomID, uid) //如果已經存在就什麽也不做
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -103,10 +103,10 @@ func (s *Server) JoinGroupRoomHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "未登录或无效 token", http.StatusUnauthorized)
 		return
 	}
-
+	/////在maingo的路由器中定義的url中取得變數
 	vars := mux.Vars(r)
 	roomIDStr := vars["room_id"]
-	roomID, err := strconv.Atoi(roomIDStr)
+	roomID, err := strconv.Atoi(roomIDStr) //將字串轉化爲int
 	if err != nil {
 		http.Error(w, "無效的 room_id", http.StatusBadRequest)
 		return
@@ -122,6 +122,7 @@ func (s *Server) JoinGroupRoomHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var exists int
+	///不關心實際的資料，只關心有沒有，有的話回傳1
 	s.DB.QueryRow("SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2", roomID, userID).Scan(&exists)
 	if exists != 1 {
 		_, err := s.DB.Exec("INSERT INTO room_members (room_id, user_id) VALUES ($1, $2)", roomID, userID)
@@ -154,7 +155,7 @@ func (s *Server) JoinGroupRoomHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(RoomMembersResponse{Members: members})
 }
 
-// GET /rooms/{room_id}/info
+// GET /rooms/{room_id}/info查詢房間的名字和是否是群組
 func (s *Server) GetRoomInfoHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	roomID := vars["room_id"]

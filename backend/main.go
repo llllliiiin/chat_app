@@ -52,9 +52,9 @@ func main() {
 	r.Handle("/rooms/{room_id}/leave", middleware.JWTAuthMiddleware(http.HandlerFunc(s.LeaveGroupHandler))).Methods("POST")
 	log.Println("✅ 所有路由成功掛載，包括 /create-group-room")
 
-	r.Handle("/messages/{message_id}/read", middleware.JWTAuthMiddleware(http.HandlerFunc(s.MarkMessageAsReadHandler))).Methods("POST")
+	r.Handle("/messages/{message_id}/markread", middleware.JWTAuthMiddleware(http.HandlerFunc(s.MarkMessageAsReadHandler))).Methods("POST")
 	r.Handle("/rooms/{room_id}/unread-count", middleware.JWTAuthMiddleware(http.HandlerFunc(s.GetUnreadMessageCountHandler))).Methods("GET")
-	r.Handle("/messages/{message_id}/reads", middleware.JWTAuthMiddleware(http.HandlerFunc(s.GetMessageReadsHandler))).Methods("GET")
+	r.Handle("/messages/{message_id}/readers", middleware.JWTAuthMiddleware(http.HandlerFunc(s.GetMessageReadsHandler))).Methods("GET")
 
 	// CORS 設定
 	c := cors.New(cors.Options{

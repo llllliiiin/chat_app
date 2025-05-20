@@ -30,7 +30,7 @@ export default function ChatRoomListPage() {
 
     if (!res.ok) return;
     const allRooms: RoomInfo[] = await res.json();
-    if (!Array.isArray(allRooms)) return;
+    if (!Array.isArray(allRooms)) return;///確保是陣列
 
     const matchedRooms: RoomInfo[] = allRooms.filter(
       room => defaultGroupNames.includes(room.room_name) && room.is_group
@@ -38,13 +38,13 @@ export default function ChatRoomListPage() {
 
     setGroupRooms(matchedRooms);
 
-    const counts: Record<number, number> = {};
+    const counts: Record<number, number> = {};//一個以 K 為 key、V 為 value 的對應表（map 或 dictionary）
     for (const room of matchedRooms) {
       const res = await fetch(`http://localhost:8081/rooms/${room.id}/unread-count`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
-      counts[room.id] = data.unread_count;
+      counts[room.id] = data.unread_count;////counts = {101: 5,102: 2,103: 0}
     }
     setUnreadCounts(counts);
   };
@@ -68,8 +68,11 @@ export default function ChatRoomListPage() {
 
   const handleDefaultGroupClick = async (roomName: string) => {
     if (!token) return;
+    //find是用來找第一個符合條件的，existing 就會是：{ id: 1, room_name: 'general', is_group: true }
     let existing = groupRooms.find((r) => r.room_name === roomName);
     if (existing) {
+      ///// prev是React state 的「前一個狀態」值。...prev是展開舊狀態的所有 key-value，意思是「保留所有現有房間的未讀數」：
+      ///[existing.id]: 0是用來覆蓋（或新增）這個房間 ID 的未讀數為 0。
       setUnreadCounts((prev) => ({ ...prev, [existing.id]: 0 })); // 點擊後立即清除紅點
       router.push(`/chatroom/group?room_id=${existing.id}`);
       return;
