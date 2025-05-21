@@ -2,6 +2,12 @@
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 
+interface RoomInfo {
+  id: number;
+  room_name: string;
+  is_group: boolean;
+}
+
 export default function UserPage() {
   const [showMenu, setShowMenu] = useState(false); // 👈 控制菜单显示
   const router = useRouter();
@@ -19,6 +25,9 @@ export default function UserPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesInputRef = useRef<HTMLInputElement>(null);
   const [messageReads, setMessageReads] = useState<Record<number, string[]>>({})
+  const [unreadCounts, setUnreadCounts] = useState<Record<number, number>>({});
+  const [groupRooms, setGroupRooms] = useState<RoomInfo[]>([]);
+  const [userToRoomIdMap, setUserToRoomIdMap] = useState<Record<string, number>>({});
   // 在 useState 中添加 webSocketStatus 来跟踪连接状态
   const [webSocketStatus, setWebSocketStatus] = useState<string>("undefined");
 
@@ -101,27 +110,6 @@ export default function UserPage() {
       console.error("讀取 messageReads 時發生錯誤", err);
     }
   };
-
-  // useEffect(() => {
-  //   const timer = setTimeout(() => {
-  //     fetchAllReads();
-  //   }, 3000);
-  //   return () => clearTimeout(timer);
-  // }, [messages]);
-
-  // ✅ 新增：進入房間時通知後端（避免 WebSocket 廣播不生效）
-  // useEffect(() => {
-  //   if (!roomId || !token) return;
-  //   fetch(`http://localhost:8081/rooms/${roomId}/enter`, {
-  //     method: "POST",
-  //     headers: {
-  //       Authorization: `Bearer ${token}`,
-  //     },
-  //   });
-  // }, [roomId, token]);
-
-
-
 
   ///////web socket建議放在「與 WebSocket 有關的 state（如 token、currentUser、roomId）都已設定完成之後」
 // useEffect：驗證登入、取得使用者列表（✅ 最早）
@@ -236,15 +224,64 @@ export default function UserPage() {
 
   
 
-  //////////////////////////
- 
+  //////// ✅ 初始化：從後端獲取所有已存在的房間，對照預設名稱，取得未讀訊息
+ const fetchRoomsAndUnreadCounts = async () => {
+    if (!token) return;
+
+    const res = await fetch("http://localhost:8081/oneroom", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (!res.ok) throw new Error('获取房间失败');
+    const allRooms: RoomInfo[] = await res.json();
+
+    if (!Array.isArray(allRooms)) return;  // 确保是数组
+
+    const matchedRooms: RoomInfo[] = allRooms.filter(
+       (room) => room.is_group === false // 筛选一对一房间
+    );
+
+    setGroupRooms(matchedRooms);
+    /////////////////////////////////////////
+    const userToRoomId: Record<string, number> = {};
+
+    for (const room of matchedRooms) {
+      const parts = room.room_name.split("_");
+      const otherUser = parts.find((name) => name !== currentUser);
+      if (otherUser) {
+        userToRoomId[otherUser] = room.id;
+      }
+    }
+
+    setUserToRoomIdMap(userToRoomId); // 你要加上 useState
+/////////////////////////////////////////
+
+    const counts: Record<string, number> = {};
+    for (const room of matchedRooms) {
+      const res = await fetch(`http://localhost:8081/rooms/${room.id}/unread-count`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      counts[room.id] = data.unread_count;  // counts = {101: 5, 102: 2, 103: 0}
+    }
+    setUnreadCounts(counts);
+  };
+
+  useEffect(() => {
+    if (token) {
+      fetchRoomsAndUnreadCounts();
+      const interval = setInterval(fetchRoomsAndUnreadCounts, 10000); // 每 10 秒輪詢一次
+      return () => clearInterval(interval);
+    }
+  }, [token]);
+  
 
   // 點選左側用戶切換聊天對象
   const handleUserClick = async (targetUser: string) => {
     const currentUser = sessionStorage.getItem("currentUser");
     const token = sessionStorage.getItem("token");
     if (!currentUser || !token) return;
-
+    // 获取或创建房间
     const res = await fetch("http://localhost:8081/get-or-create-room", {
       method: "POST",
       headers: {
@@ -255,8 +292,15 @@ export default function UserPage() {
     });
 
     const data = await res.json();
+
+    
+    // 更新未读消息计数
+    setUnreadCounts((prev) => ({ ...prev, [data.room_id]: 0 }));
+
     router.push(`/chatroom/${data.room_id}/${targetUser}`);
   };
+
+
   // 發送訊息
   const handleSend = async () => {
     const token = sessionStorage.getItem("token");
@@ -306,23 +350,7 @@ export default function UserPage() {
       alert("訊息發送失敗");
     }
   };
-  //     // ✅ 發送後重新拉 DB 資料（取代 optimistic）
-  //     const res = await fetch(`http://localhost:8081/messages?room_id=${roomId}`, {
-  //       headers: { Authorization: `Bearer ${token}` },
-  //     });
-  //     const data = await res.json();
-  //     const msgs = (data.messages || []).map((m: any) => ({
-  //       id: m.id,
-  //       content: m.content,
-  //       sender: m.sender,
-  //       readers: [],
-  //     }));
-  //     setMessages(msgs);
-  //   } catch (err) {
-  //     alert("訊息發送失敗");
-  //   }
-  // };
-
+  
   
       ///此處并沒有await json目的是爲了讓畫面實時更新，顯得流暢，是optimistic UI
       // 把訊息加入本地訊息列表
@@ -384,9 +412,12 @@ export default function UserPage() {
                   //瀏覽器會自動將 /chatroom/ルーム1/さとう 編碼為 /chatroom/%E3%83%AB%E3%83%BC%E3%83%A01/%E3%81%95%E3%81%A8%E3%81%86；
                   //而 useParams() 拿到的是「原始 URL 字串」，所以需要手動 decode 才能在畫面中還原。
                   onClick={() => handleUserClick(user)}
-                  className="p-2 bg-white rounded shadow hover:bg-gray-200 flex justify-center items-center mx-auto cursor-pointer"
+                  className="relative p-2 bg-white rounded shadow hover:bg-gray-200 flex justify-center items-center mx-auto cursor-pointer"
                 >
                   {user}
+                  {userToRoomIdMap[user] !== undefined && unreadCounts[userToRoomIdMap[user]] > 0 && (
+                    <span className="absolute right-1 top-1 w-2.5 h-2.5 bg-red-500 rounded-full shadow"></span>
+                  )}
                 </li>
               ))}
             </ul>

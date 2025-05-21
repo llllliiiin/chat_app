@@ -55,6 +55,7 @@ func main() {
 	r.Handle("/messages/{message_id}/markread", middleware.JWTAuthMiddleware(http.HandlerFunc(s.MarkMessageAsReadHandler))).Methods("POST")
 	r.Handle("/rooms/{room_id}/unread-count", middleware.JWTAuthMiddleware(http.HandlerFunc(s.GetUnreadMessageCountHandler))).Methods("GET")
 	r.Handle("/messages/{message_id}/readers", middleware.JWTAuthMiddleware(http.HandlerFunc(s.GetMessageReadsHandler))).Methods("GET")
+	r.Handle("/oneroom", middleware.JWTAuthMiddleware(http.HandlerFunc(s.GetUserOneroomHandler))).Methods("GET")
 
 	//////爲了更新進入房間時的狀態
 	r.Handle("/rooms/{room_id}/enter", middleware.JWTAuthMiddleware(http.HandlerFunc(s.EnterRoomHandler))).Methods("POST")
