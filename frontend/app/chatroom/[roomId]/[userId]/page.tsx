@@ -9,7 +9,8 @@ export default function UserPage() {
   const { roomId, userId } = useParams();
   const [users, setUsers] = useState<string[]>([]);
   const [message, setMessage] = useState(""); // 使用者正在輸入的內容
-  const [messages, setMessages] = useState<{ content: string; sender: "me" | "other" }[]>([]);
+  // const [messages, setMessages] = useState<{ content: string; sender: "me" | "other" }[]>([]);
+  const [messages, setMessages] = useState<{id: number; content: string; sender: string; readers?: string[] }[]>([]);
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -17,9 +18,19 @@ export default function UserPage() {
   const [token, setToken] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesInputRef = useRef<HTMLInputElement>(null);
+  const [messageReads, setMessageReads] = useState<Record<number, string[]>>({})
+  // 在 useState 中添加 webSocketStatus 来跟踪连接状态
+  const [webSocketStatus, setWebSocketStatus] = useState<string>("undefined");
+
 
   const wsRef = useRef<WebSocket | null>(null);//爲了解決前面的websocket沒有關閉，出現雙重消息的情況
 
+  interface Message {
+    id: number;
+    content: string;
+    sender: string;
+    readers: string[];
+  }
   // 初始化：登入驗證與取得用戶清單
   useEffect(() => {
     const currentUser = sessionStorage.getItem("currentUser");
@@ -51,6 +62,66 @@ export default function UserPage() {
       });
   }, []);
 
+    useEffect(() => {
+    if (!roomId || !token) return;
+
+    const tryEnter = () => {
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        fetch(`http://localhost:8081/rooms/${roomId}/enter`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+      } else {
+        setTimeout(tryEnter, 100); // 等待 WebSocket 連上
+      }
+      console.log("WebSocket status:", wsRef.current?.readyState);
+
+    };
+
+    tryEnter();
+  }, [roomId, token]);
+
+
+/////////////////////////
+  const fetchReads = async () => {
+    const result: Record<number, string[]> = {};
+    try {
+      for (const msg of messages) {
+        const res = await fetch(`http://localhost:8081/messages/${msg.id}/readers`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        result[msg.id] = data.readers || [];
+      }
+      setMessageReads(result);
+    } catch (err) {
+      console.error("讀取 messageReads 時發生錯誤", err);
+    }
+  };
+
+  // useEffect(() => {
+  //   const timer = setTimeout(() => {
+  //     fetchAllReads();
+  //   }, 3000);
+  //   return () => clearTimeout(timer);
+  // }, [messages]);
+
+  // ✅ 新增：進入房間時通知後端（避免 WebSocket 廣播不生效）
+  // useEffect(() => {
+  //   if (!roomId || !token) return;
+  //   fetch(`http://localhost:8081/rooms/${roomId}/enter`, {
+  //     method: "POST",
+  //     headers: {
+  //       Authorization: `Bearer ${token}`,
+  //     },
+  //   });
+  // }, [roomId, token]);
+
+
+
 
   ///////web socket建議放在「與 WebSocket 有關的 state（如 token、currentUser、roomId）都已設定完成之後」
 // useEffect：驗證登入、取得使用者列表（✅ 最早）
@@ -58,48 +129,90 @@ export default function UserPage() {
 // ✅ 👉 把 WebSocket 的 useEffect 放這裡
 // useEffect：訊息滾動到最底部（不依賴 token，放後面 OK）
   useEffect(() => {
-    if (!roomId || !token || !currentUser) return;
+    if (!roomId || !token) return;
 
-    const ws = new WebSocket(`ws://localhost:8081/ws?room_id=${roomId}`);
-    
-    // 若已有 socket 先關閉再重新建立
+    // 清理旧的 WebSocket 连接
     if (wsRef.current) {
       wsRef.current.close();
     }
+
+    const ws = new WebSocket(`ws://localhost:8081/ws?room_id=${roomId}`);
+    wsRef.current = ws;
+
     ws.onopen = () => {
-      console.log("✅ WebSocket 已連線");
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const parsed = JSON.parse(event.data);
-        if (parsed.type === "new_message" && parsed.message) {
-          setMessages((prev) => [
-            ...prev,
-            {
-              content: parsed.message.content,
-              sender: parsed.message.sender === currentUser ? "me" : "other"
-            }
-          ]);
-        }
-      } catch (err) {
-        console.error("❌ WebSocket 訊息解析錯誤", err);
-      }
-    };
-
-    ws.onclose = () => {
-      console.log("🔌 WebSocket 已關閉");
+      console.log("✅ WebSocket 连接成功");
+      setWebSocketStatus("connected"); // 设置连接成功状态
     };
 
     ws.onerror = (event) => {
-      console.error("❌ WebSocket 發生錯誤", event);
+      console.error("❌ WebSocket 错误", event);
+      setWebSocketStatus("error"); // 设置错误状态
+    };
+
+    ws.onclose = () => {
+      console.log("🔌 WebSocket 已关闭");
+      setWebSocketStatus("closed"); // 设置关闭状态
+    };
+
+    ws.onmessage = (event) => {
+      const parsed = JSON.parse(event.data);
+
+      // 如果收到的是已读更新消息
+      if (parsed.type === "read_update" && parsed.message_id) {
+        setMessageReads((prev) => ({
+          ...prev,
+          [parsed.message_id]: parsed.readers || []
+        }));
+      }
+
+      // 收到新消息
+      if (parsed.type === "new_message" && parsed.message) {
+        const msg = parsed.message;
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: msg.id,
+            sender: msg.sender,
+            content: msg.content,
+          }
+        ]);
+        setTimeout(() => {
+          fetchReads(); // 获取已读用户列表
+        }, 300);
+      }
     };
 
     return () => {
-      ws.close();
+      ws.close(); // 在离开房间时关闭连接
     };
-  }, [roomId, token, currentUser]);
-  ///////////////////
+  }, [roomId, token]); // 当 roomId 或 token 变化时重新建立 WebSocket 连接
+
+        ///////////////////
+
+  // 自動滾動至最新訊息
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+
+  useEffect(() => {
+    if (!messages || !token || !currentUser) return;
+    messages.forEach((msg) => {
+      if (msg.sender !== currentUser) {
+        fetch(`http://localhost:8081/messages/${msg.id}/markread`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch((err) => console.error("标记已读失败", err));
+      }
+    });
+
+    // 延遲一點點時間讓資料寫入 DB，再 fetch reads
+    setTimeout(() => {
+      fetchReads();
+    }, 300); // 300ms 實測穩定足夠
+  }, [messages, currentUser, token]);
+
+
 
   // 加載訊息紀錄
   useEffect(() => {
@@ -111,19 +224,20 @@ export default function UserPage() {
       .then((res) => res.json())
       .then((data) => {
         const msgs = (data.messages || []).map((m: any) => ({
+          id: m.id,
           content: m.content,
-          sender: m.sender === currentUser ? "me" : "other",
+          sender: m.sender,
+          readers: [],
         }));
         setMessages(msgs);
+        console.log("⚠️ 收到的 messages 是：", data.messages);
       });
   }, [roomId, token, currentUser]);
 
+  
 
-
-  // 自動滾動至最新訊息
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  //////////////////////////
+ 
 
   // 點選左側用戶切換聊天對象
   const handleUserClick = async (targetUser: string) => {
@@ -143,7 +257,6 @@ export default function UserPage() {
     const data = await res.json();
     router.push(`/chatroom/${data.room_id}/${targetUser}`);
   };
-
   // 發送訊息
   const handleSend = async () => {
     const token = sessionStorage.getItem("token");
@@ -172,6 +285,45 @@ export default function UserPage() {
           thread_root_id: null,
         }),
       });
+
+      setMessage("");////將輸入欄清空，爲了避免websocket雙重發送的問題，不在上面加setmessages了
+
+      // 发送消息后立即标记为已读
+      messages.forEach((msg) => {
+        if (msg.sender !== currentUser) {
+          fetch(`http://localhost:8081/messages/${msg.id}/markread`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+          }).catch((err) => console.error("标记已读失败", err));
+        }
+      });
+
+      // 刷新已读状态
+      setTimeout(() => {
+        fetchReads(); // 获取已读用户列表
+      }, 300);
+    } catch (err) {
+      alert("訊息發送失敗");
+    }
+  };
+  //     // ✅ 發送後重新拉 DB 資料（取代 optimistic）
+  //     const res = await fetch(`http://localhost:8081/messages?room_id=${roomId}`, {
+  //       headers: { Authorization: `Bearer ${token}` },
+  //     });
+  //     const data = await res.json();
+  //     const msgs = (data.messages || []).map((m: any) => ({
+  //       id: m.id,
+  //       content: m.content,
+  //       sender: m.sender,
+  //       readers: [],
+  //     }));
+  //     setMessages(msgs);
+  //   } catch (err) {
+  //     alert("訊息發送失敗");
+  //   }
+  // };
+
+  
       ///此處并沒有await json目的是爲了讓畫面實時更新，顯得流暢，是optimistic UI
       // 把訊息加入本地訊息列表
       ///...是展開原本的messages的意思，再加上新的信息content和sender
@@ -179,11 +331,9 @@ export default function UserPage() {
      //因為這條訊息還 沒經過後端寫入 → 再經過 GET 拉下來 → 再比對 sender。
      // 你只知道： 是你剛打的 是你剛送出的所以它一定來自「你自己」
      // 👉 所以程式 主動指定 sender 為 "me"，來讓畫面能立刻知道它應該靠右顯示、藍色氣泡等。
-      setMessage("");////將輸入欄清空，爲了避免websocket雙重發送的問題，不在上面加setmessages了
-    } catch (err) {
-      alert("訊息發送失敗");
-    }
-  };
+       // ✅ 發送後直接樂觀更新畫面（因為 WebSocket 不會 echo 給自己）
+      
+
 
   if (checking) {
     return <div className="h-screen flex justify-center items-center">Loading...</div>;
@@ -251,9 +401,14 @@ export default function UserPage() {
 
           <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 bg-gray-50 scrollbar-hide">
             {messages.map((msg, idx) => (
-              <div key={idx} className={`flex ${msg.sender === "me" ? "justify-end" : "justify-start"}`}>
-                <div className={`p-2 rounded-lg max-w-xs ${msg.sender === "me" ? "bg-blue-500 text-white" : "bg-green-700 text-white"}`}>
+              <div key={idx} className={`flex ${msg.sender === currentUser ? "justify-end" : "justify-start"}`}>
+                <div className={`p-2 rounded-lg max-w-xs ${msg.sender === currentUser ? "bg-blue-500 text-white" : "bg-green-700 text-white"}`}>
                   {msg.content}
+                  {msg.sender === currentUser && (
+                      <div className="text-[10px] mt-1 text-right">
+                      {(messageReads[msg.id]?.length ?? 0) > 0 ? "已讀" : "未讀"}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
@@ -287,4 +442,3 @@ export default function UserPage() {
     </div>
   );
 }
-

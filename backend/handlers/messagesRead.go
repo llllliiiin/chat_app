@@ -25,6 +25,14 @@ func (s *Server) MarkMessageAsReadHandler(w http.ResponseWriter, r *http.Request
 		http.Error(w, "無效訊息 ID", http.StatusBadRequest)
 		return
 	}
+	// 查訊息在哪個 room 中
+	var roomID int
+	err = s.DB.QueryRow("SELECT room_id FROM messages WHERE id = $1", messageID).Scan(&roomID)
+	if err != nil {
+		http.Error(w, "查詢 room_id 失敗", http.StatusInternalServerError)
+		return
+	}
+
 	////如果已經存在，就更新成爲現在的時間
 	_, err = s.DB.Exec(`
 		INSERT INTO message_reads (message_id, user_id, read_at)
@@ -34,6 +42,36 @@ func (s *Server) MarkMessageAsReadHandler(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		http.Error(w, "寫入資料庫失敗", http.StatusInternalServerError)
 		return
+	}
+
+	// 查目前這則訊息所有已讀者名稱
+	rows, err := s.DB.Query(`
+		SELECT u.username
+		FROM message_reads mr
+		JOIN users u ON mr.user_id = u.id
+		WHERE mr.message_id = $1
+	`, messageID)
+	if err != nil {
+		http.Error(w, "查詢已讀失敗", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var readers []string
+	for rows.Next() {
+		var name string
+		_ = rows.Scan(&name)
+		readers = append(readers, name)
+	}
+
+	// 廣播已讀狀態
+	s.WSHub.Broadcast <- WSMessage{
+		RoomID: roomID,
+		Data: map[string]any{
+			"type":       "read_update",
+			"message_id": messageID,
+			"readers":    readers,
+		},
 	}
 
 	w.WriteHeader(http.StatusOK)
