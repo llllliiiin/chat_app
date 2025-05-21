@@ -2,6 +2,12 @@
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 
+interface RoomInfo {
+  id: number;
+  room_name: string;
+  is_group: boolean;
+}
+
 export default function ChatRoomWithUserPage() {
   const [showMenu, setShowMenu] = useState(false); // 👈 控制菜单显示
   const router = useRouter();
@@ -11,12 +17,27 @@ export default function ChatRoomWithUserPage() {
   const [users, setUsers] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+
+  const [userToRoomIdMap, setUserToRoomIdMap] = useState<Record<string, number>>({});
+  const [unreadCounts, setUnreadCounts] = useState<Record<number, number>>({});
+  const [groupRooms, setGroupRooms] = useState<RoomInfo[]>([]);
+
 
   // 點擊用戶後建立房間並跳轉
   const handleUserClick = async (targetUser: string) => {
     const currentUser = sessionStorage.getItem("currentUser");
     const token = sessionStorage.getItem("token");
-    if (!currentUser || !token) return;
+    
+    if (!token || !currentUser) {
+      router.push("/login");
+      return;
+    }
+
+    setCurrentUser(currentUser);
+    setToken(token); // 👈 這行一定要加上
+
+    
 
     const res = await fetch("http://localhost:8081/get-or-create-room", {
       method: "POST",
@@ -35,14 +56,15 @@ export default function ChatRoomWithUserPage() {
   // 登入驗證並取得所有使用者清單
   useEffect(() => {
     const token = sessionStorage.getItem("token");
-    const sessionUser = sessionStorage.getItem("currentUser");
+    const currentUser = sessionStorage.getItem("currentUser");
 
-    if (!token || !sessionUser) {
+    if (!token || !currentUser) {
       router.push("/login");
       return;
     }
 
-    setCurrentUser(sessionUser);
+    setCurrentUser(currentUser);
+    setToken(token); // ✅ 這一行必加！
 
     fetch("http://localhost:8081/users", {
       headers: { Authorization: `Bearer ${token}` },
@@ -61,7 +83,96 @@ export default function ChatRoomWithUserPage() {
         setChecking(false);
       });
   }, [router]);
+  
+  useEffect(() => {
+    if (!token || !currentUser) return;
+    console.log("💡 WebSocket 啟動條件: token =", token, "currentUser =", currentUser);
 
+    console.log("🛰️ 嘗試建立 WebSocket 連線...", currentUser);
+
+    const ws = new WebSocket(`ws://localhost:8081/ws?user=${currentUser}`);
+
+    ws.onopen = () => {
+      console.log("✅ WebSocket 連線成功");
+    };
+
+    ws.onmessage = (event) => {
+      const parsed = JSON.parse(event.data);
+      console.log("📨 收到 WebSocket 訊息：", parsed);
+
+      if (parsed.type === "new_unread" && parsed.room_id && parsed.unread_count !== undefined) {
+        console.log("🔴 設定房間", parsed.room_id, "未讀數：", parsed.unread_count);
+        setUnreadCounts((prev) => ({
+          ...prev,
+          [parsed.room_id]: parsed.unread_count,
+        }));
+      }
+    };
+
+    ws.onerror = (err) => {
+      console.error("❌ WebSocket 發生錯誤：", err);
+    };
+
+    ws.onclose = () => {
+      console.warn("🔌 WebSocket 已關閉");
+    };
+
+    return () => ws.close();
+  }, [token, currentUser]);
+
+
+  const fetchRoomsAndUnreadCounts = async () => {
+      if (!token) return;
+  
+      const res = await fetch("http://localhost:8081/oneroom", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+  
+      if (!res.ok) throw new Error('获取房间失败');
+      const allRooms: RoomInfo[] = await res.json();
+  
+      if (!Array.isArray(allRooms)) return;  // 确保是数组
+  
+      const matchedRooms: RoomInfo[] = allRooms.filter(
+         (room) => room.is_group === false // 筛选一对一房间
+      );
+  
+      setGroupRooms(matchedRooms);
+      /////////////////////////////////////////
+      const userToRoomId: Record<string, number> = {};
+  
+      for (const room of matchedRooms) {
+        const parts = room.room_name.split("_");
+        const otherUser = parts.find((name) => name !== currentUser);
+        if (otherUser) {
+          userToRoomId[otherUser] = room.id;
+        }
+      }
+  
+      setUserToRoomIdMap(userToRoomId); // 你要加上 useState
+  /////////////////////////////////////////
+      
+      const counts: Record<number, number> = {};
+      for (const room of matchedRooms) {
+        const res = await fetch(`http://localhost:8081/rooms/${room.id}/unread-count`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        console.log(`📥 房間 ${room.id} (${room.room_name}) 的未讀數是：`, data.unread_count);
+        counts[room.id] = data.unread_count;
+      }
+      setUnreadCounts(counts);
+    };
+  
+    useEffect(() => {
+      if (token) {
+        fetchRoomsAndUnreadCounts();
+        const interval = setInterval(fetchRoomsAndUnreadCounts, 10000); // 每 10 秒輪詢一次
+        return () => clearInterval(interval);
+      }
+    }, [token]);
+
+    
   if (checking || currentUser === null) {
     return <div className="h-screen flex justify-center items-center">Loading...</div>;
   }
@@ -113,9 +224,12 @@ export default function ChatRoomWithUserPage() {
                   <li
                     key={user}
                     onClick={() => handleUserClick(user)}
-                    className="p-2 bg-white rounded shadow hover:bg-gray-200 flex justify-center items-center mx-auto cursor-pointer"
+                    className="relative p-2 bg-white rounded shadow hover:bg-gray-200 flex justify-center items-center mx-auto cursor-pointer"
                   >
                     {user}
+                    {userToRoomIdMap[user] !== undefined && unreadCounts[userToRoomIdMap[user]] > 0 && (
+                      <span className="absolute right-1 top-1 w-2.5 h-2.5 bg-red-500 rounded-full shadow"></span>
+                    )}
                   </li>
                 ))}
             </ul>

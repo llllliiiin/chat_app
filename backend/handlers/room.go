@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"backend/utils"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -37,6 +38,9 @@ func (s *Server) GetOrCreateRoomHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	sort.Ints(userIDs[:]) // 確保順序一致
 
+	// 生成唯一的 room_name（通过拼接两个用户的用户名）
+	roomName := req.User1 + "_" + req.User2
+
 	// 查詢是否已有這兩人參與、且為 is_group = false 的房間
 	var roomID int
 	query := `
@@ -50,7 +54,7 @@ func (s *Server) GetOrCreateRoomHandler(w http.ResponseWriter, r *http.Request) 
 
 	if err == sql.ErrNoRows {
 		// 創建新房間
-		err = s.DB.QueryRow(`INSERT INTO chat_rooms (is_group) VALUES (false) RETURNING id`).Scan(&roomID)
+		err = s.DB.QueryRow(`INSERT INTO chat_rooms (is_group,room_name) VALUES(false, $1) RETURNING id`, roomName).Scan(&roomID)
 		if err != nil {
 			http.Error(w, "创建房间失败", http.StatusInternalServerError)
 			return
@@ -68,4 +72,37 @@ func (s *Server) GetOrCreateRoomHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	json.NewEncoder(w).Encode(RoomResponse{RoomID: roomID})
+}
+
+// GET /oneroom取得用戶參與的所有的聊天室
+func (s *Server) GetUserOneroomHandler(w http.ResponseWriter, r *http.Request) {
+	userID, err := utils.GetUserIDFromToken(r)
+	if err != nil {
+		http.Error(w, "未登录或無效 token", http.StatusUnauthorized)
+		return
+	}
+
+	// 查询一对一房间（is_group = false）
+	rows, err := s.DB.Query(`
+		SELECT cr.id, cr.room_name, cr.is_group
+		FROM chat_rooms cr
+		JOIN room_members rm ON cr.id = rm.room_id
+		WHERE rm.user_id = $1 AND cr.is_group = false
+	`, userID)
+	if err != nil {
+		http.Error(w, "查詢房間失敗", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var rooms []RoomInfo
+	for rows.Next() {
+		var room RoomInfo
+		if err := rows.Scan(&room.ID, &room.RoomName, &room.IsGroup); err == nil {
+			rooms = append(rooms, room)
+		}
+	}
+
+	// 返回一对一房间列表
+	json.NewEncoder(w).Encode(rooms)
 }
