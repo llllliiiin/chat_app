@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"backend/utils"
+	"database/sql"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -142,9 +143,11 @@ func (s *Server) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.DB.Query(`
 		SELECT 
 			m.id, m.room_id, m.sender_id, u.username, 
-			m.content, m.created_at, m.updated_at, m.thread_root_id
+			m.content, m.created_at, m.updated_at, m.thread_root_id,
+			a.file_name -- nullable
 		FROM messages m
 		JOIN users u ON m.sender_id = u.id
+		LEFT JOIN message_attachments a ON a.message_id = m.id
 		WHERE m.room_id = $1
 		ORDER BY m.created_at ASC
 	`, roomID)
@@ -163,20 +166,26 @@ func (s *Server) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 		CreatedAt    time.Time `json:"created_at"`
 		UpdatedAt    time.Time `json:"updated_at"`
 		ThreadRootID *int      `json:"thread_root_id,omitempty"`
+		Attachment   *string   `json:"attachment,omitempty"` // ✅ 新增附件欄位
 	}
 
 	var messages []MessageResponse
 	for rows.Next() {
 		var msg MessageResponse
+		var attachment sql.NullString
 		if err := rows.Scan(
 			&msg.ID, &msg.RoomID, &msg.SenderID, &msg.Sender,
 			&msg.Content, &msg.CreatedAt, &msg.UpdatedAt, &msg.ThreadRootID,
+			&attachment,
 		); err != nil {
 			log.Println("❌ 資料掃描失敗:", err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]string{"error": "读取数据错误"})
 			return
+		}
+		if attachment.Valid {
+			msg.Attachment = &attachment.String
 		}
 		messages = append(messages, msg)
 	}
