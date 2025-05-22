@@ -111,11 +111,6 @@ export default function UserPage() {
     }
   };
 
-  ///////web socket建議放在「與 WebSocket 有關的 state（如 token、currentUser、roomId）都已設定完成之後」
-// useEffect：驗證登入、取得使用者列表（✅ 最早）
-// useEffect：根據 roomId 取得歷史訊息（✅ 第二）
-// ✅ 👉 把 WebSocket 的 useEffect 放這裡
-// useEffect：訊息滾動到最底部（不依賴 token，放後面 OK）
   useEffect(() => {
     if (!roomId || !token) return;
 
@@ -164,9 +159,9 @@ export default function UserPage() {
             content: msg.content,
           }
         ]);
-        setTimeout(() => {
-          fetchReads(); // 获取已读用户列表
-        }, 300);
+        // setTimeout(() => {
+        //   fetchReads(); // 获取已读用户列表
+        // }, 300);
       }
     };
 
@@ -197,6 +192,7 @@ export default function UserPage() {
     // 延遲一點點時間讓資料寫入 DB，再 fetch reads
     setTimeout(() => {
       fetchReads();
+      fetchRoomsAndUnreadCounts(); // ✅ 補這一行
     }, 300); // 300ms 實測穩定足夠
   }, [messages, currentUser, token]);
 
@@ -248,6 +244,7 @@ export default function UserPage() {
     for (const room of matchedRooms) {
       const parts = room.room_name.split("_");
       const otherUser = parts.find((name) => name !== currentUser);
+      console.log("👤 currentUser:", currentUser, "room:", room.room_name, "→ otherUser:", otherUser, "roomId:", room.id);
       if (otherUser) {
         userToRoomId[otherUser] = room.id;
       }
@@ -270,7 +267,7 @@ export default function UserPage() {
   useEffect(() => {
     if (token) {
       fetchRoomsAndUnreadCounts();
-      const interval = setInterval(fetchRoomsAndUnreadCounts, 10000); // 每 10 秒輪詢一次
+      const interval = setInterval(fetchRoomsAndUnreadCounts, 5000); // 每 10 秒輪詢一次
       return () => clearInterval(interval);
     }
   }, [token]);
@@ -292,7 +289,13 @@ export default function UserPage() {
     });
 
     const data = await res.json();
+    const actualRoomId = data.room_id;
 
+    // ✅ 1. 發送 enter 請求（通知伺服器你已經進入此房間）
+    await fetch(`http://localhost:8081/rooms/${actualRoomId}/enter`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
     
     // 更新未读消息计数
     setUnreadCounts((prev) => ({ ...prev, [data.room_id]: 0 }));
@@ -437,7 +440,7 @@ export default function UserPage() {
                   {msg.content}
                   {msg.sender === currentUser && (
                       <div className="text-[10px] mt-1 text-right">
-                      {(messageReads[msg.id]?.length ?? 0) > 0 ? "已讀" : "未讀"}
+                      {(messageReads[msg.id]?.length ?? 0) > 0 ? "既読" : "未読"}
                     </div>
                   )}
                 </div>

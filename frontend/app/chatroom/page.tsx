@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
 interface RoomInfo {
@@ -14,6 +14,7 @@ export default function ChatRoomListPage() {
   const [token, setToken] = useState<string | null>(null);
   const [unreadCounts, setUnreadCounts] = useState<Record<number, number>>({});
   const router = useRouter();
+  const wsRef = useRef<WebSocket | null>(null);
 
   const oneToOneRooms = [
     { label: "ルーム1", id: 1 }
@@ -50,18 +51,18 @@ export default function ChatRoomListPage() {
   };
 
   useEffect(() => {
-    const tk = sessionStorage.getItem("token");
-    if (!tk) {
+    const token = sessionStorage.getItem("token");
+    if (!token) {
       router.push("/login");
       return;
     }
-    setToken(tk);
+    setToken(token);
   }, [router]);
 
   useEffect(() => {
     if (token) {
       fetchRoomsAndUnreadCounts();
-      const interval = setInterval(fetchRoomsAndUnreadCounts, 10000); // 每 10 秒輪詢一次
+      const interval = setInterval(fetchRoomsAndUnreadCounts, 5000); // 每 10 秒輪詢一次
       return () => clearInterval(interval);
     }
   }, [token]);
@@ -98,6 +99,41 @@ export default function ChatRoomListPage() {
       }
     }
   };
+
+  useEffect(() => {
+    if (!token) return;
+
+    // 避免重複建立
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
+
+    const ws = new WebSocket("ws://localhost:8081/ws?room_id=0"); // 用 room_id=0 代表全局 / 未進房
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      console.log("✅ WebSocket 連線成功（首頁）");
+    };
+
+    ws.onmessage = (event) => {
+      const parsed = JSON.parse(event.data);
+      console.log("📩 收到 WebSocket 訊息（首頁）:", parsed);
+
+      // 👉 可後續處理全局通知，例如：
+      // if (parsed.type === "new_message" && parsed.room_id && parsed.content) {
+      //   showNotification(parsed.content); 或紅點更新
+      // }
+    };
+
+    ws.onclose = () => {
+      console.log("🔌 WebSocket 關閉（首頁）");
+    };
+
+    return () => {
+      ws.close(); // 使用者切換頁面或離開時，自動清除
+    };
+  }, [token]);
+
 
   const handleNewGroupClick = async () => {
     if (!token) return;
@@ -163,9 +199,9 @@ export default function ChatRoomListPage() {
 
       <div className="flex-1 flex p-6 bg-white overflow-y-auto">
         <div className="w-full max-w-3xl mx-auto">
-          <h3 className="text-lg text-[#2e8b57] font-bold mb-2">1対1</h3>
+          <h3 className="text-lg text-[#2e8b57] font-bold mb-2">一対一</h3>
           <div className="bg-gray-100 rounded p-4 shadow mb-6" style={{ backgroundColor: "#2e8b57" }}>
-            <h4 className="text-md font-semibold text-white mb-3">一對一房間</h4>
+            <h4 className="text-md font-semibold text-white mb-3">一対一ルーム</h4>
             <ul className="space-y-3">
               {oneToOneRooms.map((room) => (
                 <li
