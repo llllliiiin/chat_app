@@ -77,6 +77,11 @@ func main() {
 		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
 	})
 
+	///attachment
+	r.Handle("/messages/upload", middleware.JWTAuthMiddleware(http.HandlerFunc(s.UploadMessageAttachmentHandler))).Methods("POST")
+	// ✅ 提供靜態圖片 /uploads/xx.jpg 的路由
+	r.PathPrefix("/uploads/").Handler(http.StripPrefix("/uploads/", http.FileServer(http.Dir("public/uploads"))))
+
 	log.Println("🚀 Server running on http://localhost:8080")
 	log.Fatal(http.ListenAndServe(":8080", c.Handler(r)))
 }
