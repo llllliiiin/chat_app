@@ -4,8 +4,8 @@ import { useEffect, useState, useRef} from "react";
 ///在 app/ router 中，useSearchParams() 是一個 只能在 client 元件使用的 Hook，並且必須包在 <Suspense> 裡面使用，否則在 prerender 階段就會報錯（就像你現在看到的情況）。
 
 
-
 export default function GroupChatRoomContent() {
+  const wsRef = useRef<WebSocket | null>(null);//爲了解決前面的websocket沒有關閉，出現雙重消息的情況
   // const { roomId } = useParams();
   const searchParams = useSearchParams();
   const roomId = searchParams.get("room_id");
@@ -21,19 +21,21 @@ export default function GroupChatRoomContent() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [messageReads, setMessageReads] = useState<Record<number, string[]>>({})
   const [messages, setMessages] = useState<{ id: number; content: string; sender: string }[]>([]);
-
+  const [webSocketStatus, setWebSocketStatus] = useState<string>("undefined");
+/////畫面中央顯示離開房閒
+  const [systemMessage, setSystemMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const current = sessionStorage.getItem("currentUser");
-    const tk = sessionStorage.getItem("token");
+    const token = sessionStorage.getItem("token");
 
 
-    if (!current || !tk) {
+    if (!current || !token) {
       router.push("/login");
       return;
     }
     setCurrentUser(current);
-    setToken(tk);
+    setToken(token);
   }, [router]);
 
   useEffect(() => {
@@ -71,16 +73,7 @@ export default function GroupChatRoomContent() {
         setMessages(msgs);
       });
   }, [roomId, token]);
-  useEffect(() => {
-    if (!token || !roomId) return;
 
-    fetch(`http://localhost:8081/rooms/${roomId}/enter`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-  }, [roomId, token]);
 
 
   ////////////////////////////////
@@ -103,15 +96,41 @@ export default function GroupChatRoomContent() {
 //////////////////////////////////////
 
   /////////////////websocket
+
   useEffect(() => {
-    if (!roomId) return;
+    if (!roomId || !token) return;
+
+    // 清理旧的 WebSocket 连接
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
 
     const ws = new WebSocket(`ws://localhost:8081/ws?room_id=${roomId}`);
+    wsRef.current = ws;
 
-    ws.onmessage = async (event) => {
+    ws.onopen = () => {
+      console.log("✅ WebSocket 连接成功");
+      setWebSocketStatus("connected"); // 设置连接成功状态
+      fetch(`http://localhost:8081/rooms/${roomId}/enter`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    };
+
+    ws.onerror = (event) => {
+      console.error("❌ WebSocket 错误", event);
+      setWebSocketStatus("error"); // 设置错误状态
+    };
+
+    ws.onclose = () => {
+      console.log("🔌 WebSocket 已关闭");
+      setWebSocketStatus("closed"); // 设置关闭状态
+    };
+
+    ws.onmessage = (event) => {
       const parsed = JSON.parse(event.data);
 
-
+      // 如果收到的是已读更新消息
       if (parsed.type === "read_update" && parsed.message_id) {
         setMessageReads((prev) => ({
           ...prev,
@@ -119,8 +138,10 @@ export default function GroupChatRoomContent() {
         }));
       }
 
+      // 收到新消息
       if (parsed.type === "new_message" && parsed.message) {
         const msg = parsed.message;
+        
         setMessages((prev) => [
           ...prev,
           {
@@ -129,70 +150,86 @@ export default function GroupChatRoomContent() {
             content: msg.content,
           }
         ]);
+
+        // fetchReads();
+        // setTimeout(() => {
+        //   fetchReads(); // 获取已读用户列表
+        // }, 300);
       }
 
-      if (parsed.type === "new_message" || parsed.type === "user_entered") {
-        // 1. 重新拉 messages（避免新訊息不在 state）
-        const res = await fetch(`http://localhost:8081/messages?room_id=${roomId}`, {
+        // ✅ 新增處理 user_entered
+      if (parsed.type === "user_entered"|| parsed.type === "user_left") {
+        const username = parsed.user;
+        if (username !== currentUser) {
+          const message = parsed.type === "user_entered"
+            ? `${username}さんが入室しました`
+            : `${username}さんが退室しました`;
+
+          setSystemMessage(message);
+          setTimeout(() => setSystemMessage(null), 2500);
+        }
+
+        // 🔁 拉一次最新成員列表
+        fetch(`http://localhost:8081/rooms/${roomId}/join-group`, {
           headers: { Authorization: `Bearer ${token}` },
-        });
-        const data = await res.json();
-        const msgs = (data.messages || []).map((m:any) => ({
-          id: m.id,
-          content: m.content,
-          sender: m.sender,
-        }));
-        setMessages(msgs); // 這會觸發 useEffect 中的 markRead + fetchReads
-
-        // 👇 加上這句：一收到新訊息或有人成員進入，就更新 readers
-        setTimeout(() => {
-          fetchReads();
-        }, 300);
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            setMembers(data.members || []);
+          });
+        
+        // 2. 拉 messages
+        fetch(`http://localhost:8081/messages?room_id=${roomId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            const msgs = (data.messages || []).map((m: any) => ({
+              id: m.id,
+              content: m.content,
+              sender: m.sender,
+            }));
+            setMessages(msgs); // ✅ 這會觸發 markread 和 fetchReads useEffect
+          });
+          
+        // fetchReads();
+        // setTimeout(() => {
+        //   fetchReads();
+        // }, 300);
       }
     };
 
-    ws.onopen = () => {
-      console.log("✅ WebSocket 連線成功");
+    return () => {
+      ws.close(); // 在离开房间时关闭连接
     };
-    //因爲hotreloading的原因，會在上一個websocket尚未鏈接的時候被取消，只是開發的問題，吧這個error屏蔽掉就可以了
-    
-    ws.onerror = (event) => {
-      const anyEvent = event as any;
-      const msg = anyEvent?.message;
+  }, [roomId, token]); // 当 roomId 或 token 变化时重新建立 WebSocket 连接
 
-      // 有些開發環境的熱重載會自動中斷 websocket，這種錯誤可以忽略
-      if (typeof msg === "string" && msg.includes("closed before")) return;
-
-      console.error("❌ WebSocket 錯誤", msg || event);
-    };
-
-    ws.onclose = () => {
-      console.log("🔌 WebSocket 已關閉");
-    };
-
-    return () => ws.close(); // 清理
-  }, [roomId]);
-//////////////////////////////
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
   useEffect(() => {
+
     if (!messages || !token || !currentUser) return;
+    const lastMsg = messages[messages.length - 1];
+
     messages.forEach((msg) => {
-      if (msg.sender !== currentUser) {
+      // 排除自己剛發出的最後一則訊息
+      const isSelfLastMsg = msg.id === lastMsg?.id && msg.sender === currentUser;
+
+      if (msg.sender !== currentUser && !isSelfLastMsg) {
         fetch(`http://localhost:8081/messages/${msg.id}/markread`, {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },
         });
       }
     });
-
+    // fetchReads()
     // 延遲一點點時間讓資料寫入 DB，再 fetch reads
-    setTimeout(() => {
-      fetchReads();
-    }, 300); // 300ms 實測穩定足夠
+    // setTimeout(() => {
+    //   fetchReads();
+    // }, 300); // 300ms 實測穩定足夠
   }, [messages, currentUser, token]);
 //////////////////////////////////////
 
@@ -216,11 +253,11 @@ export default function GroupChatRoomContent() {
     // setMessages([...messages, { content: message, sender: currentUser || "me" }]);
     setMessage("");
     // 重新拉訊息,之前的取值沒有id，所以要fetch
-    const res = await fetch(`http://localhost:8081/messages?room_id=${roomId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const data = await res.json();
-    setMessages(data.messages || []);
+    // const res = await fetch(`http://localhost:8081/messages?room_id=${roomId}`, {
+    //   headers: { Authorization: `Bearer ${token}` },
+    // });
+    // const data = await res.json();
+    // setMessages(data.messages || []);
   };
 
   const handleLeaveGroup = async () => {
@@ -231,16 +268,21 @@ export default function GroupChatRoomContent() {
         Authorization: `Bearer ${token}` },
     });
     if (res.ok) {
-      alert("您已退出群組");
+      alert("退室しました");
       router.push("/chatroom");
     } else {
-      alert("退出失敗");
+      alert("退室失敗しました");
     }
   };
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
       <div className="relative bg-white p-4 border-b shadow-sm h-20 flex items-center justify-center" style={{ backgroundColor: "#f5fffa" }}>
+        {systemMessage && (
+          <div className="absolute left-1/2 transform -translate-x-1/2 top-full mt-2 bg-[#2e8b57] text-white px-4 py-2 rounded shadow-md text-sm z-20 transition-opacity duration-300">
+            {systemMessage}
+          </div>
+        )}
         <h2 className="text-lg text-[#2e8b57] font-semibold">{roomTitle} (ID: {roomId})</h2>
         <div className="absolute right-4 top-1/2 transform -translate-y-1/2">
           <img
@@ -252,7 +294,7 @@ export default function GroupChatRoomContent() {
           {showMenu && (
             <div className="absolute right-0 mt-2 w-40 bg-white border border-gray-200 rounded shadow-lg z-10">
               <button onClick={() => router.push("/")} className="block w-full text-left px-4 py-2 hover:bg-gray-100 text-sm">ホームページ</button>
-              <button onClick={handleLeaveGroup} className="block w-full text-left px-4 py-2 hover:bg-gray-100 text-sm text-red-500">退出群組</button>
+              <button onClick={handleLeaveGroup} className="block w-full text-left px-4 py-2 hover:bg-gray-100 text-sm text-red-500">退室します</button>
               <button
                 onClick={() => {
                   sessionStorage.removeItem("token");
@@ -269,7 +311,7 @@ export default function GroupChatRoomContent() {
 
       <div className="flex flex-1 overflow-hidden">
         <div className="w-1/5 bg-[#2e8b57] text-white p-4 overflow-y-auto">
-          <h3 className="text-md font-semibold mb-4 text-center">👥 成員</h3>
+          <h3 className="text-md font-semibold mb-4 text-center">メンバー</h3>
           <ul className="space-y-3">
             {members.map((name, idx) => (
               <li key={idx} className="bg-white text-[#2e8b57] rounded px-3 py-2 text-sm text-center">
@@ -293,7 +335,7 @@ export default function GroupChatRoomContent() {
                     <div className="text-[10px] mt-1 text-right">
                       {readers.length === 0
                         ? "未読"
-                        : `已読 ${readers.length}人: ${readers.join(", ")}`}
+                        : `既読 ${readers.length}人: ${readers.join(", ")}`}
                     </div>
 
                     {/* <div className="text-[10px] mt-1 text-right">

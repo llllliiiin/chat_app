@@ -4,6 +4,7 @@ import (
 	"backend/utils"
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
 	"sort"
 )
@@ -78,6 +79,7 @@ func (s *Server) GetOrCreateRoomHandler(w http.ResponseWriter, r *http.Request) 
 func (s *Server) GetUserOneroomHandler(w http.ResponseWriter, r *http.Request) {
 	userID, err := utils.GetUserIDFromToken(r)
 	if err != nil {
+		log.Println("❌ token 驗證失敗:", err)
 		http.Error(w, "未登录或無效 token", http.StatusUnauthorized)
 		return
 	}
@@ -90,6 +92,7 @@ func (s *Server) GetUserOneroomHandler(w http.ResponseWriter, r *http.Request) {
 		WHERE rm.user_id = $1 AND cr.is_group = false
 	`, userID)
 	if err != nil {
+		log.Println("❌ 查詢房間失敗:", err)
 		http.Error(w, "查詢房間失敗", http.StatusInternalServerError)
 		return
 	}

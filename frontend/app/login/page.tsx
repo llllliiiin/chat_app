@@ -23,7 +23,7 @@ export default function LoginPage() {
 
       if (res.ok) {
         const data = await res.json();
-        alert("登录成功！");
+        alert("登録成功！");
         setUsername("");
         setPassword("");
         sessionStorage.setItem("token", data.token); // ✅ 一定要先设置 token
@@ -33,7 +33,7 @@ export default function LoginPage() {
         router.push("/chatroom");
       } else {
         const errMsg = await res.text();
-        alert("登录失败！原因：" + errMsg);
+        alert("登録失敗：" + errMsg);
       }
     } catch (error) {
       alert("连接服务器失败！");

@@ -50,6 +50,10 @@ export default function ChatRoomWithUserPage() {
 
     const data = await res.json();
     const actualRoomId = data.room_id;
+
+    // 更新未读消息计数
+    setUnreadCounts((prev) => ({ ...prev, [data.room_id]: 0 }));
+
     router.push(`/chatroom/${actualRoomId}/${targetUser}`);
   };
 
@@ -93,7 +97,7 @@ export default function ChatRoomWithUserPage() {
     const ws = new WebSocket(`ws://localhost:8081/ws?user=${currentUser}`);
 
     ws.onopen = () => {
-      console.log("✅ WebSocket 連線成功");
+      console.log("✅ WebSocket 連結成功");
     };
 
     ws.onmessage = (event) => {
@@ -110,11 +114,11 @@ export default function ChatRoomWithUserPage() {
     };
 
     ws.onerror = (err) => {
-      console.error("❌ WebSocket 發生錯誤：", err);
+      console.error("❌ WebSocket error：", err);
     };
 
     ws.onclose = () => {
-      console.warn("🔌 WebSocket 已關閉");
+      console.warn("🔌 WebSocket is closed");
     };
 
     return () => ws.close();
@@ -128,7 +132,7 @@ export default function ChatRoomWithUserPage() {
         headers: { Authorization: `Bearer ${token}` },
       });
   
-      if (!res.ok) throw new Error('获取房间失败');
+      if (!res.ok) throw new Error('部屋のデータ取得失敗しました');
       const allRooms: RoomInfo[] = await res.json();
   
       if (!Array.isArray(allRooms)) return;  // 确保是数组
@@ -158,7 +162,7 @@ export default function ChatRoomWithUserPage() {
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = await res.json();
-        console.log(`📥 房間 ${room.id} (${room.room_name}) 的未讀數是：`, data.unread_count);
+        // console.log(`📥 房間 ${room.id} (${room.room_name}) 的未讀數是：`, data.unread_count);
         counts[room.id] = data.unread_count;
       }
       setUnreadCounts(counts);
@@ -167,7 +171,7 @@ export default function ChatRoomWithUserPage() {
     useEffect(() => {
       if (token) {
         fetchRoomsAndUnreadCounts();
-        const interval = setInterval(fetchRoomsAndUnreadCounts, 10000); // 每 10 秒輪詢一次
+        const interval = setInterval(fetchRoomsAndUnreadCounts, 5000); // 每 10 秒輪詢一次
         return () => clearInterval(interval);
       }
     }, [token]);
