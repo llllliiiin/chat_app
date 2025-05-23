@@ -10,39 +10,40 @@ import (
 )
 
 type RoomRequest struct {
-	User1 string `json:"user1"` // currentUser
-	User2 string `json:"user2"` // targetUser
+	User1 string `json:"user1"` // 現在のユーザー
+	User2 string `json:"user2"` // 対象ユーザー
 }
 
 type RoomResponse struct {
 	RoomID int `json:"room_id"`
 }
 
+// POST /oneroom 2人の間に1対1の部屋を取得または作成
 func (s *Server) GetOrCreateRoomHandler(w http.ResponseWriter, r *http.Request) {
 	var req RoomRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "请求体格式错误", http.StatusBadRequest)
+		http.Error(w, "リクエストボディの形式が無効です", http.StatusBadRequest) // 请求体格式错误
 		return
 	}
 
-	// 查兩個用戶 id
+	// 2人のユーザーIDを取得
 	var userIDs [2]int
 	err := s.DB.QueryRow(`SELECT id FROM users WHERE username=$1`, req.User1).Scan(&userIDs[0])
 	if err != nil {
-		http.Error(w, "找不到用户1", http.StatusBadRequest)
+		http.Error(w, "ユーザー1が見つかりません", http.StatusBadRequest) // 找不到用户1
 		return
 	}
 	err = s.DB.QueryRow(`SELECT id FROM users WHERE username=$1`, req.User2).Scan(&userIDs[1])
 	if err != nil {
-		http.Error(w, "找不到用户2", http.StatusBadRequest)
+		http.Error(w, "ユーザー2が見つかりません", http.StatusBadRequest) // 找不到用户2
 		return
 	}
-	sort.Ints(userIDs[:]) // 確保順序一致
+	sort.Ints(userIDs[:]) // 一意性を保つため順番を固定する
 
-	// 生成唯一的 room_name（通过拼接两个用户的用户名）
+	// 一意なルーム名を生成（ユーザー名を結合）
 	roomName := req.User1 + "_" + req.User2
 
-	// 查詢是否已有這兩人參與、且為 is_group = false 的房間
+	// すでに2人が参加していて is_group = false の部屋が存在するか確認
 	var roomID int
 	query := `
 		SELECT cr.id FROM chat_rooms cr
@@ -54,37 +55,42 @@ func (s *Server) GetOrCreateRoomHandler(w http.ResponseWriter, r *http.Request) 
 	err = s.DB.QueryRow(query, userIDs[0], userIDs[1]).Scan(&roomID)
 
 	if err == sql.ErrNoRows {
-		// 創建新房間
-		err = s.DB.QueryRow(`INSERT INTO chat_rooms (is_group,room_name) VALUES(false, $1) RETURNING id`, roomName).Scan(&roomID)
+		// 新しい部屋を作成
+		err = s.DB.QueryRow(
+			`INSERT INTO chat_rooms (is_group, room_name) VALUES (false, $1) RETURNING id`,
+			roomName,
+		).Scan(&roomID)
 		if err != nil {
-			http.Error(w, "创建房间失败", http.StatusInternalServerError)
+			http.Error(w, "ルームの作成に失敗しました", http.StatusInternalServerError) // 创建房间失败
 			return
 		}
-		// 加入 room_members
-		_, err = s.DB.Exec(`INSERT INTO room_members (room_id, user_id) VALUES ($1, $2), ($1, $3)`,
-			roomID, userIDs[0], userIDs[1])
+		// 両方のユーザーを room_members に追加
+		_, err = s.DB.Exec(
+			`INSERT INTO room_members (room_id, user_id) VALUES ($1, $2), ($1, $3)`,
+			roomID, userIDs[0], userIDs[1],
+		)
 		if err != nil {
-			http.Error(w, "添加房间成员失败", http.StatusInternalServerError)
+			http.Error(w, "ルームメンバーの追加に失敗しました", http.StatusInternalServerError) // 添加房间成员失败
 			return
 		}
 	} else if err != nil {
-		http.Error(w, "查询房间失败", http.StatusInternalServerError)
+		http.Error(w, "ルームの検索に失敗しました", http.StatusInternalServerError) // 查询房间失败
 		return
 	}
 
 	json.NewEncoder(w).Encode(RoomResponse{RoomID: roomID})
 }
 
-// GET /oneroom取得用戶參與的所有的聊天室
+// GET /oneroom 現在のユーザーが参加しているすべての1対1チャットルームを取得
 func (s *Server) GetUserOneroomHandler(w http.ResponseWriter, r *http.Request) {
 	userID, err := utils.GetUserIDFromToken(r)
 	if err != nil {
-		log.Println("❌ token 驗證失敗:", err)
-		http.Error(w, "未登录或無效 token", http.StatusUnauthorized)
+		log.Println("❌ トークンの検証に失敗:", err)                              // token 驗證失敗
+		http.Error(w, "ログインしていないか、トークンが無効です", http.StatusUnauthorized) // 未登录或無效 token
 		return
 	}
 
-	// 查询一对一房间（is_group = false）
+	// is_group = false の一対一チャットルームを取得
 	rows, err := s.DB.Query(`
 		SELECT cr.id, cr.room_name, cr.is_group
 		FROM chat_rooms cr
@@ -92,8 +98,8 @@ func (s *Server) GetUserOneroomHandler(w http.ResponseWriter, r *http.Request) {
 		WHERE rm.user_id = $1 AND cr.is_group = false
 	`, userID)
 	if err != nil {
-		log.Println("❌ 查詢房間失敗:", err)
-		http.Error(w, "查詢房間失敗", http.StatusInternalServerError)
+		log.Println("❌ ルームの取得に失敗:", err)                               // 查詢房間失敗
+		http.Error(w, "ルームの取得に失敗しました", http.StatusInternalServerError) // 查詢房間失敗
 		return
 	}
 	defer rows.Close()
@@ -106,6 +112,6 @@ func (s *Server) GetUserOneroomHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 返回一对一房间列表
+	// 一対一チャットルームのリストを返す
 	json.NewEncoder(w).Encode(rooms)
 }

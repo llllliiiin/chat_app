@@ -9,13 +9,13 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// Clients: 一個 map，Key 是房間 ID（int），Value 是所有連線（conn）組成的集合（map[*websocket.Conn]bool）。
-// Register: channel，用來註冊（新增）用戶連線。
-// Unregister: channel，用來取消註冊（刪除）用戶連線。
-// Broadcast: channel，傳送一個消息給同一房間的所有連線。
-// Mutex: 鎖，用來確保多執行緒對 Clients 的存取安全
+// Clients: 各ルームID（int）に対応する WebSocket 接続集合（map[*websocket.Conn]bool）
+// Register: ユーザー接続を登録するためのチャネル
+// Unregister: ユーザー切断を処理するためのチャネル
+// Broadcast: メッセージを同一ルーム内のすべての接続に送信するためのチャネル
+// Mutex: 複数スレッドから Clients を安全に操作するためのロック
 type WebSocketHub struct {
-	Clients    map[int]map[*websocket.Conn]bool // roomID -> set of conns
+	Clients    map[int]map[*websocket.Conn]bool // roomID -> 接続セット
 	Register   chan ClientConn
 	Unregister chan ClientConn
 	Broadcast  chan WSMessage
@@ -32,11 +32,12 @@ type WSMessage struct {
 	Data   map[string]any `json:"data"`
 }
 
-// //你需要從原本的 HTTP 連線「升級（Upgrade）」成 WebSocket 連線。
+// WebSocket にアップグレードするための設定
 var Upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
+// WebSocketHub の初期化
 func NewHub() *WebSocketHub {
 	return &WebSocketHub{
 		Clients:    make(map[int]map[*websocket.Conn]bool),
@@ -46,11 +47,11 @@ func NewHub() *WebSocketHub {
 	}
 }
 
-// /Run() 函數會在主程式中執行，用來持續處理所有註冊、註銷、廣播等事件。透過 select 不斷監聽三個 channel。
+// Run() は main プログラム内で呼び出され、登録・解除・ブロードキャストを監視する select ループを実行
 func (hub *WebSocketHub) Run() {
 	for {
 		select {
-		//從register中取得資料，注冊使用者，將連線加入該房間的連線清單。先加鎖，最後解鎖
+		// Register チャネルから受信し、ユーザーをルーム接続マップに追加（ロック付き）
 		case client := <-hub.Register:
 			hub.Mutex.Lock()
 			if hub.Clients[client.RoomID] == nil {
@@ -58,7 +59,8 @@ func (hub *WebSocketHub) Run() {
 			}
 			hub.Clients[client.RoomID][client.Conn] = true
 			hub.Mutex.Unlock()
-			///使用者離開或者連綫失敗
+
+		// Unregister チャネルから受信し、切断されたユーザーを削除
 		case client := <-hub.Unregister:
 			hub.Mutex.Lock()
 			if conns, ok := hub.Clients[client.RoomID]; ok {
@@ -66,12 +68,13 @@ func (hub *WebSocketHub) Run() {
 				client.Conn.Close()
 			}
 			hub.Mutex.Unlock()
-			///廣播信息
+
+		// Broadcast チャネルから受信したメッセージをルーム内すべての接続に送信
 		case msg := <-hub.Broadcast:
 			hub.Mutex.Lock()
 			for conn := range hub.Clients[msg.RoomID] {
 				if err := conn.WriteJSON(msg.Data); err != nil {
-					log.Println("🔴 寫入 WebSocket 失敗:", err)
+					log.Println("🔴 WebSocket 書き込みに失敗:", err) // 寫入 WebSocket 失敗
 					conn.Close()
 					delete(hub.Clients[msg.RoomID], conn)
 				}
@@ -81,18 +84,20 @@ func (hub *WebSocketHub) Run() {
 	}
 }
 
+// WebSocket ハンドラー（HTTP を WebSocket にアップグレードし、Hub に登録）
 func (s *Server) WebSocketHandler(hub *WebSocketHub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		roomID, _ := strconv.Atoi(r.URL.Query().Get("room_id"))
-		conn, err := Upgrader.Upgrade(w, r, nil) //將 HTTP 轉成 WebSocket 連線。
+		conn, err := Upgrader.Upgrade(w, r, nil) // HTTP を WebSocket にアップグレード
 		if err != nil {
-			log.Println("❌ WebSocket 升級失敗:", err)
+			log.Println("❌ WebSocket アップグレード失敗:", err) // WebSocket 升級失敗
 			return
 		}
-		///// 註冊使用者進入 hub，建立一個 ClientConn，並傳入 hub 的註冊 channel。
+		// クライアントを Hub に登録
 		client := ClientConn{RoomID: roomID, Conn: conn}
 		hub.Register <- client
-		/////持續讀取信息
+
+		// 接続からメッセージ読み取りを継続（読み取りが終了したら切断）
 		for {
 			var dummy map[string]any
 			if err := conn.ReadJSON(&dummy); err != nil {

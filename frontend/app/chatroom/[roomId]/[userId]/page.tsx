@@ -1,3 +1,4 @@
+// "use client" を必ず含める
 "use client";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
@@ -9,146 +10,128 @@ interface RoomInfo {
 }
 
 export default function UserPage() {
-  const [showMenu, setShowMenu] = useState(false); // 👈 控制菜单显示
+  const [showMenu, setShowMenu] = useState(false); // 👈 メニューの表示を制御
   const router = useRouter();
-
   const { roomId, userId } = useParams();
+
   const [users, setUsers] = useState<string[]>([]);
-  const [message, setMessage] = useState(""); // 使用者正在輸入的內容
-  // const [messages, setMessages] = useState<{ content: string; sender: "me" | "other" }[]>([]);
-  const [messages, setMessages] = useState<{id: number; content: string; sender: string; readers?: string[] }[]>([]);
+  const [message, setMessage] = useState(""); // 入力中の内容
+  const [messages, setMessages] = useState<{ id: number; content: string; sender: string; readers?: string[]; attachment?: string }[]>([]);
+
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [currentUser, setCurrentUser] = useState<string | null>(null);
-  const [token, setToken] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesInputRef = useRef<HTMLInputElement>(null);
-  const [messageReads, setMessageReads] = useState<Record<number, string[]>>({})
+
+  const [messageReads, setMessageReads] = useState<Record<number, string[]>>({});
   const [unreadCounts, setUnreadCounts] = useState<Record<number, number>>({});
   const [groupRooms, setGroupRooms] = useState<RoomInfo[]>([]);
   const [userToRoomIdMap, setUserToRoomIdMap] = useState<Record<string, number>>({});
-  // 在 useState 中添加 webSocketStatus 来跟踪连接状态
   const [webSocketStatus, setWebSocketStatus] = useState<string>("undefined");
 
+  const wsRef = useRef<WebSocket | null>(null); // WebSocket の再接続対策
 
-  const wsRef = useRef<WebSocket | null>(null);//爲了解決前面的websocket沒有關閉，出現雙重消息的情況
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
-  interface Message {
-    id: number;
-    content: string;
-    sender: string;
-    readers: string[];
-  }
-  // 初始化：登入驗證與取得用戶清單
+  // 初期化：ログインチェック & ユーザー一覧の取得
   useEffect(() => {
-    const currentUser = sessionStorage.getItem("currentUser");
-    const token = sessionStorage.getItem("token");
-
-    if (!token || !currentUser) {
-      router.push("/login");
-      return;
-    }
-
-    setCurrentUser(currentUser);
-    setToken(token);
-
-    fetch("http://localhost:8081/users", {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(await res.text());
+    fetch("http://localhost:8081/me", { credentials: "include" })
+      .then((res) => {
+        if (!res.ok) {
+          router.push("/login");
+          return null;
+        }
         return res.json();
       })
-      .then((data: { users: string[] }) => {
-        setUsers(data.users);
-        setChecking(false);
-      })
-      .catch((err) => {
-        console.error("获取用户失败：", err);
-        setError(err.message || "加载失败");
-        setChecking(false);
+      .then((data) => {
+        if (data?.username) {
+          setCurrentUser(data.username);
+          fetch("http://localhost:8081/users", { credentials: "include" })
+            .then(async (res) => {
+              if (!res.ok) throw new Error(await res.text());
+              return res.json();
+            })
+            .then((data: { users: string[] }) => {
+              setUsers(data.users);
+              setChecking(false);
+            })
+            .catch((err) => {
+              console.error("ユーザー取得失敗：", err);
+              setError(err.message || "読み込み失敗");
+              setChecking(false);
+            });
+        }
       });
-  }, []);
+  }, [router]);
 
-    useEffect(() => {
-    if (!roomId || !token) return;
+  // 入室通知
+  useEffect(() => {
+    if (!roomId || !currentUser) return;
 
     const tryEnter = () => {
       const ws = wsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
         fetch(`http://localhost:8081/rooms/${roomId}/enter`, {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
+          credentials: "include",
         });
       } else {
-        setTimeout(tryEnter, 100); // 等待 WebSocket 連上
+        setTimeout(tryEnter, 100); // 接続待ち
       }
-      console.log("WebSocket status:", wsRef.current?.readyState);
-
     };
-
     tryEnter();
-  }, [roomId, token]);
+  }, [roomId, currentUser]);
 
-
-/////////////////////////
   const fetchReads = async () => {
     const result: Record<number, string[]> = {};
     try {
       for (const msg of messages) {
         const res = await fetch(`http://localhost:8081/messages/${msg.id}/readers`, {
-          headers: { Authorization: `Bearer ${token}` },
+          credentials: "include",
         });
         const data = await res.json();
         result[msg.id] = data.readers || [];
       }
       setMessageReads(result);
     } catch (err) {
-      console.error("讀取 messageReads 時發生錯誤", err);
+      console.error("既読データ取得失敗", err);
     }
   };
 
   useEffect(() => {
-    if (!roomId || !token) return;
+    if (!roomId || !currentUser) return;
 
-    // 清理旧的 WebSocket 连接
-    if (wsRef.current) {
-      wsRef.current.close();
-    }
-
+    if (wsRef.current) wsRef.current.close();
     const ws = new WebSocket(`ws://localhost:8081/ws?room_id=${roomId}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
-      console.log("✅ WebSocket 连接成功");
-      setWebSocketStatus("connected"); // 设置连接成功状态
+      console.log("✅ WebSocket 接続成功");
+      setWebSocketStatus("connected");
     };
 
     ws.onerror = (event) => {
-      console.error("❌ WebSocket 错误", event);
-      setWebSocketStatus("error"); // 设置错误状态
+      console.error("❌ WebSocket エラー", event);
+      setWebSocketStatus("error");
     };
 
     ws.onclose = () => {
-      console.log("🔌 WebSocket 已关闭");
-      setWebSocketStatus("closed"); // 设置关闭状态
+      console.log("🔌 WebSocket 切断");
+      setWebSocketStatus("closed");
     };
 
     ws.onmessage = (event) => {
       const parsed = JSON.parse(event.data);
 
-      // 如果收到的是已读更新消息
       if (parsed.type === "read_update" && parsed.message_id) {
         setMessageReads((prev) => ({
           ...prev,
-          [parsed.message_id]: parsed.readers || []
+          [parsed.message_id]: parsed.readers || [],
         }));
       }
 
-      // 收到新消息
       if (parsed.type === "new_message" && parsed.message) {
         const msg = parsed.message;
         setMessages((prev) => [
@@ -157,53 +140,42 @@ export default function UserPage() {
             id: msg.id,
             sender: msg.sender,
             content: msg.content,
-          }
+            attachment: msg.attachment || undefined,
+          },
         ]);
-        // setTimeout(() => {
-        //   fetchReads(); // 获取已读用户列表
-        // }, 300);
       }
     };
 
     return () => {
-      ws.close(); // 在离开房间时关闭连接
+      ws.close();
     };
-  }, [roomId, token]); // 当 roomId 或 token 变化时重新建立 WebSocket 连接
+  }, [roomId, currentUser]);
 
-        ///////////////////
-
-  // 自動滾動至最新訊息
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-
   useEffect(() => {
-    if (!messages || !token || !currentUser) return;
+    if (!messages || !currentUser) return;
     messages.forEach((msg) => {
       if (msg.sender !== currentUser) {
         fetch(`http://localhost:8081/messages/${msg.id}/markread`, {
           method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-        }).catch((err) => console.error("标记已读失败", err));
+          credentials: "include",
+        }).catch((err) => console.error("既読マーク失敗", err));
       }
     });
 
-    // 延遲一點點時間讓資料寫入 DB，再 fetch reads
     setTimeout(() => {
       fetchReads();
-      fetchRoomsAndUnreadCounts(); // ✅ 補這一行
-    }, 300); // 300ms 實測穩定足夠
-  }, [messages, currentUser, token]);
+      fetchRoomsAndUnreadCounts();
+    }, 300);
+  }, [messages, currentUser]);
 
-
-
-  // 加載訊息紀錄
   useEffect(() => {
-    if (!roomId || !token || !currentUser) return;
-
+    if (!roomId || !currentUser) return;
     fetch(`http://localhost:8081/messages?room_id=${roomId}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      credentials: "include",
     })
       .then((res) => res.json())
       .then((data) => {
@@ -211,121 +183,115 @@ export default function UserPage() {
           id: m.id,
           content: m.content,
           sender: m.sender,
+          attachment: m.attachment || undefined,
           readers: [],
         }));
         setMessages(msgs);
-        console.log("⚠️ 收到的 messages 是：", data.messages);
       });
-  }, [roomId, token, currentUser]);
+  }, [roomId, currentUser]);
 
-  
-
-  //////// ✅ 初始化：從後端獲取所有已存在的房間，對照預設名稱，取得未讀訊息
- const fetchRoomsAndUnreadCounts = async () => {
-    if (!token) return;
-
+  const fetchRoomsAndUnreadCounts = async () => {
     const res = await fetch("http://localhost:8081/oneroom", {
-      headers: { Authorization: `Bearer ${token}` },
+      credentials: "include",
     });
 
-    if (!res.ok) throw new Error('获取房间失败');
+    if (!res.ok) throw new Error("ルーム取得失敗");
     const allRooms: RoomInfo[] = await res.json();
+    if (!Array.isArray(allRooms)) return;
 
-    if (!Array.isArray(allRooms)) return;  // 确保是数组
-
-    const matchedRooms: RoomInfo[] = allRooms.filter(
-       (room) => room.is_group === false // 筛选一对一房间
-    );
-
+    const matchedRooms = allRooms.filter((room) => room.is_group === false);
     setGroupRooms(matchedRooms);
-    /////////////////////////////////////////
-    const userToRoomId: Record<string, number> = {};
+
+
+    const newUserToRoomIdMap: Record<string, number> = {};
 
     for (const room of matchedRooms) {
-      const parts = room.room_name.split("_");
-      const otherUser = parts.find((name) => name !== currentUser);
-      console.log("👤 currentUser:", currentUser, "room:", room.room_name, "→ otherUser:", otherUser, "roomId:", room.id);
+      if (!room.room_name.includes("_") || !currentUser) continue;
+
+      const parts = room.room_name.split("_"); // ❗ 不要 lowerCase
+      const me = currentUser;
+
+      const otherUser = parts.find((name) => name !== me);
+
       if (otherUser) {
-        userToRoomId[otherUser] = room.id;
+        newUserToRoomIdMap[otherUser] = room.id;
       }
     }
 
-    setUserToRoomIdMap(userToRoomId); // 你要加上 useState
-/////////////////////////////////////////
+    console.log("✅ userToRoomIdMap 正確建立 =", newUserToRoomIdMap);
+    setUserToRoomIdMap(newUserToRoomIdMap);
+    console.log("🧪 渲染中使用者清單：", users);
+    console.log("🧪 當前使用者 currentUser：", currentUser);
+    console.log("🧪 userToRoomIdMap keys：", Object.keys(userToRoomIdMap));
+
+
+
 
     const counts: Record<string, number> = {};
     for (const room of matchedRooms) {
       const res = await fetch(`http://localhost:8081/rooms/${room.id}/unread-count`, {
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: "include",
       });
       const data = await res.json();
-      counts[room.id] = data.unread_count;  // counts = {101: 5, 102: 2, 103: 0}
+      counts[room.id] = data.unread_count;
     }
     setUnreadCounts(counts);
+    console.log(counts);
   };
 
+  // ✅ 只有在 currentUser 存在時才會觸發 fetchRoomsAndUnreadCounts
   useEffect(() => {
-    if (token) {
-      fetchRoomsAndUnreadCounts();
-      const interval = setInterval(fetchRoomsAndUnreadCounts, 5000); // 每 10 秒輪詢一次
-      return () => clearInterval(interval);
+    if (!currentUser) {
+      console.warn("⚠️ currentUser 為 null，跳過 fetchRoomsAndUnreadCounts 初始化");
+      return;
     }
-  }, [token]);
-  
+    fetchRoomsAndUnreadCounts(); // 首次抓取
+    const interval = setInterval(() => {
+      if (currentUser) {
+        fetchRoomsAndUnreadCounts(); // 定時刷新
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [currentUser]); // 👈 依賴 currentUser
 
-  // 點選左側用戶切換聊天對象
+
+
   const handleUserClick = async (targetUser: string) => {
-    const currentUser = sessionStorage.getItem("currentUser");
-    const token = sessionStorage.getItem("token");
-    if (!currentUser || !token) return;
-    // 获取或创建房间
     const res = await fetch("http://localhost:8081/get-or-create-room", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
       },
+      credentials: "include",
       body: JSON.stringify({ user1: currentUser, user2: targetUser }),
     });
 
     const data = await res.json();
     const actualRoomId = data.room_id;
 
-    // ✅ 1. 發送 enter 請求（通知伺服器你已經進入此房間）
     await fetch(`http://localhost:8081/rooms/${actualRoomId}/enter`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
+      credentials: "include",
     });
-    
-    // 更新未读消息计数
-    setUnreadCounts((prev) => ({ ...prev, [data.room_id]: 0 }));
 
+    setUnreadCounts((prev) => ({ ...prev, [data.room_id]: 0 }));
     router.push(`/chatroom/${data.room_id}/${targetUser}`);
   };
 
-
-  // 發送訊息
   const handleSend = async () => {
-    const token = sessionStorage.getItem("token");
     const parsedRoomId = parseInt(roomId as string, 10);
 
     if (!message.trim()) return;
-    if (!token) {
-      alert("請先登入");
-      return;
-    }
     if (!roomId || isNaN(parsedRoomId) || parsedRoomId <= 0) {
-      alert("房間 ID 無效");
+      alert("無効なルームIDです");
       return;
     }
 
     try {
       await fetch("http://localhost:8081/messages", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           room_id: parsedRoomId,
           content: message,
@@ -333,38 +299,52 @@ export default function UserPage() {
         }),
       });
 
-      setMessage("");////將輸入欄清空，爲了避免websocket雙重發送的問題，不在上面加setmessages了
-
-      // 发送消息后立即标记为已读
-      messages.forEach((msg) => {
-        if (msg.sender !== currentUser) {
-          fetch(`http://localhost:8081/messages/${msg.id}/markread`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${token}` },
-          }).catch((err) => console.error("标记已读失败", err));
-        }
-      });
-
-      // 刷新已读状态
+      setMessage("");
       setTimeout(() => {
-        fetchReads(); // 获取已读用户列表
+        fetchReads();
       }, 300);
     } catch (err) {
-      alert("訊息發送失敗");
+      alert("送信失敗");
     }
   };
-  
-  
-      ///此處并沒有await json目的是爲了讓畫面實時更新，顯得流暢，是optimistic UI
-      // 把訊息加入本地訊息列表
-      ///...是展開原本的messages的意思，再加上新的信息content和sender
-      // setMessages([...messages, { content: message, sender: "me" }]);
-     //因為這條訊息還 沒經過後端寫入 → 再經過 GET 拉下來 → 再比對 sender。
-     // 你只知道： 是你剛打的 是你剛送出的所以它一定來自「你自己」
-     // 👉 所以程式 主動指定 sender 為 "me"，來讓畫面能立刻知道它應該靠右顯示、藍色氣泡等。
-       // ✅ 發送後直接樂觀更新畫面（因為 WebSocket 不會 echo 給自己）
-      
 
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !roomId) return;
+
+    const reader = new FileReader();
+    reader.onload = () => setPreviewImage(reader.result as string);
+    reader.readAsDataURL(file);
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("room_id", roomId.toString());
+    formData.append("type", "image");
+
+    await fetch("http://localhost:8081/messages/upload", {
+      method: "POST",
+      credentials: "include",
+      body: formData,
+    });
+
+    setPreviewImage(null);
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !roomId) return;
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("room_id", roomId.toString());
+    formData.append("type", "file");
+
+    await fetch("http://localhost:8081/messages/upload", {
+      method: "POST",
+      credentials: "include",
+      body: formData,
+    });
+  };
 
   if (checking) {
     return <div className="h-screen flex justify-center items-center">Loading...</div>;
@@ -373,10 +353,32 @@ export default function UserPage() {
   return (
     <div className="h-screen flex flex-col overflow-hidden">
       {/* 共通ヘッダー */}
-      <div className="flex justify-between items-center bg-white p-4 border-b shadow-sm h-20" style={{ backgroundColor: "#f5fffa" }}>
-        <h2 className="absolute left-1/2 transform -translate-x-1/2 text-lg text-[#2e8b57] font-semibold">LINECHAT</h2>
-        <div></div>
-        <div className="relative">
+      <div
+        className="relative flex justify-center items-center bg-white p-4 border-b shadow-sm h-20"
+        style={{ backgroundColor: "#f5fffa" }}
+      >
+        {/* ← 戻るボタン（チャットルーム一覧へ） */}
+        <button
+          onClick={() => router.push("/chatroom")}
+          className="absolute left-4 top-1/2 transform -translate-y-1/2 text-[#2e8b57] hover:text-green-800 transition"
+          aria-label="Back to Room List"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="h-7 w-7"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+
+        <h2 className="text-lg text-[#2e8b57] font-semibold">LINECHAT</h2>
+
+        {/* 右側メニューアイコンそのまま保留 */}
+        <div className="absolute right-4 top-1/2 transform -translate-y-1/2">
           <img
             src="/window.svg"
             alt="My Avatar"
@@ -385,22 +387,18 @@ export default function UserPage() {
           />
           {showMenu && (
             <div className="absolute right-0 mt-2 w-40 bg-white border border-gray-200 rounded shadow-lg z-10">
-              <button onClick={() => router.push("/")} className="block w-full text-left px-4 py-2 hover:bg-gray-100 text-sm">
-                ホームページ
-              </button>
+              <button onClick={() => router.push("/")} className="block w-full text-left px-4 py-2 hover:bg-gray-100 text-sm">ホームページ</button>
               <button
-                onClick={() => {
-                  sessionStorage.removeItem("token");
-                  router.push("/login");
-                }}
+                onClick={() => router.push("/login")}
                 className="block w-full text-left px-4 py-2 hover:bg-gray-100 text-sm text-red-500"
               >
-                ログアウト
+                ログイン画面へ
               </button>
             </div>
           )}
         </div>
       </div>
+
 
       <div className="flex-1 flex min-h-0">
         {/* 左邊用戶列表 */}
@@ -434,42 +432,95 @@ export default function UserPage() {
           </div>
 
           <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 bg-gray-50 scrollbar-hide">
-            {messages.map((msg, idx) => (
-              <div key={idx} className={`flex ${msg.sender === currentUser ? "justify-end" : "justify-start"}`}>
-                <div className={`p-2 rounded-lg max-w-xs ${msg.sender === currentUser ? "bg-blue-500 text-white" : "bg-green-700 text-white"}`}>
-                  {msg.content}
-                  {msg.sender === currentUser && (
-                      <div className="text-[10px] mt-1 text-right">
-                      {(messageReads[msg.id]?.length ?? 0) > 0 ? "既読" : "未読"}
+            {messages.map((msg) => {
+              const readers = messageReads[msg.id] || [];
+              const isSender = msg.sender === currentUser;
+              return (
+                <div key={msg.id} className={`flex ${isSender ? "justify-end" : "justify-start"}`}>
+                  <div className={`p-2 rounded-lg max-w-xs ${isSender ? "bg-blue-500" : "bg-green-700"} text-white`}>
+                    <div className="text-xs font-semibold mb-1">{msg.sender}</div>
+                    <div>
+                      {msg.content && <div>{msg.content}</div>}
+                      {msg.attachment && msg.attachment.match(/\.(jpg|jpeg|png|gif)$/i) ? (
+                        <img
+                          src={`http://localhost:8081${msg.attachment.startsWith("/uploads/") ? msg.attachment : `/uploads/${msg.attachment}`}`}
+                          alt="attachment"
+                          className="mt-2 rounded shadow max-w-full h-auto"
+                        />
+                      ) : msg.attachment ? (
+                        <a
+                          href={`http://localhost:8081${msg.attachment.startsWith("/uploads/") ? msg.attachment : `/uploads/${msg.attachment}`}`}
+                          target="_blank"
+                          className="text-blue-200 underline text-sm block mt-2"
+                        >
+                          📎 添付ファイルを開く
+                        </a>
+                      ) : null}
                     </div>
-                  )}
+                    <div className="text-[10px] mt-1 text-right">
+                      {readers.length === 0 ? "未読" : `既読 ${readers.length}人: ${readers.join(", ")}`}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             <div ref={messagesEndRef} />
           </div>
 
-          <div className="p-4 border-t flex items-center bg-white">
-            <input
-              ref={messagesInputRef}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  handleSend();
-                }
-              }}
-              type="text"
-              placeholder="メッセージを入力..."
-              className="flex-1 border rounded px-3 py-2 mr-2"
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-            />
-            <button
-              onClick={handleSend}
-              className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-            >
-              送信
-            </button>
+          {/* ===== 精簡後聊天輸入區（功能列靠左，自動增高）===== */}
+          <div className="border-t bg-white px-4 py-3">
+            {/* 預覽圖片（可選） */}
+            {previewImage && (
+              <div className="mb-2 relative w-fit">
+                <img src={previewImage} className="max-h-48 rounded shadow" alt="preview" />
+                <button
+                  onClick={() => setPreviewImage(null)}
+                  className="absolute -top-2 -right-2 bg-black text-white text-xs rounded-full w-5 h-5 flex items-center justify-center"
+                >
+                  ×
+                </button>
+              </div>
+            )}
+
+            <div className="flex items-end">
+              {/* 功能按鈕列（左下） */}
+              <div className="flex flex-col justify-end mr-2">
+                <input type="file" id="file-upload" style={{ display: "none" }} onChange={handleFileUpload} />
+                <input type="file" accept="image/*" id="image-upload" style={{ display: "none" }} onChange={handleImageUpload} />
+                <div className="flex space-x-2 text-xl text-gray-600">
+                  <button onClick={() => document.getElementById("file-upload")?.click()} title="ファイル">📎</button>
+                  <button onClick={() => document.getElementById("image-upload")?.click()} title="画像">🖼️</button>
+                  <button onClick={() => alert("スタンプ機能は未実装です")} title="スタンプ">💬</button>
+                </div>
+              </div>
+
+              {/* 輸入欄與送信按鈕 */}
+              <div className="flex-1 flex flex-col">
+                <textarea
+                  className="w-full border rounded px-3 py-2 text-sm resize-none max-h-36 overflow-y-auto"
+                  rows={1}
+                  placeholder="メッセージを入力...（Enterで送信 / Shift+Enterで改行）"
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSend();
+                    }
+                  }}
+                />
+              </div>
+
+              {/* 送信按鈕 */}
+              <div className="ml-3">
+                <button
+                  onClick={handleSend}
+                  className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+                >
+                  送信
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
