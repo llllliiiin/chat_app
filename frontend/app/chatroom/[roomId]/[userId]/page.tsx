@@ -1,5 +1,6 @@
 // "use client" を必ず含める
 "use client";
+import EmojiPicker from 'emoji-picker-react';
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 
@@ -34,6 +35,8 @@ export default function UserPage() {
   const wsRef = useRef<WebSocket | null>(null); // WebSocket の再接続対策
 
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
   // 初期化：ログインチェック & ユーザー一覧の取得
   useEffect(() => {
@@ -487,10 +490,28 @@ export default function UserPage() {
               <div className="flex flex-col justify-end mr-2">
                 <input type="file" id="file-upload" style={{ display: "none" }} onChange={handleFileUpload} />
                 <input type="file" accept="image/*" id="image-upload" style={{ display: "none" }} onChange={handleImageUpload} />
-                <div className="flex space-x-2 text-xl text-gray-600">
+                <div className="relative flex space-x-2 text-xl text-gray-600">
                   <button onClick={() => document.getElementById("file-upload")?.click()} title="ファイル">📎</button>
                   <button onClick={() => document.getElementById("image-upload")?.click()} title="画像">🖼️</button>
-                  <button onClick={() => alert("スタンプ機能は未実装です")} title="スタンプ">💬</button>
+                  <button onClick={() => setShowEmojiPicker(prev => !prev)} title="絵文字">😊</button>
+                  {showEmojiPicker && (
+                    <div
+                      className="absolute z-50 bg-white rounded shadow-lg origin-bottom-left"
+                      style={{
+                        bottom: '100%',
+                        left: 0,
+                        transform: 'translateY(-10px) scale(0.75)', // 等比缩小整个 UI
+                        transformOrigin: 'bottom left',
+                      }}
+                    >
+                      <EmojiPicker
+                        onEmojiClick={(emojiData) => {
+                          setMessage((prev) => prev + emojiData.emoji); // 插入的是 emoji 字符，不受视觉缩放影响
+                          setShowEmojiPicker(false);
+                        }}
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
 
