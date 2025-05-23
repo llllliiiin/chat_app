@@ -21,11 +21,11 @@ type RoomMembersResponse struct {
 	Members []string `json:"members"`
 }
 
-// GET /rooms取得用戶參與的所有的聊天室
+// GET /rooms ユーザーが参加しているすべてのチャットルームを取得
 func (s *Server) GetUserRoomsHandler(w http.ResponseWriter, r *http.Request) {
 	userID, err := utils.GetUserIDFromToken(r)
 	if err != nil {
-		http.Error(w, "token無効", http.StatusUnauthorized)
+		http.Error(w, "トークンが無効です", http.StatusUnauthorized) // token無効
 		return
 	}
 
@@ -36,7 +36,7 @@ func (s *Server) GetUserRoomsHandler(w http.ResponseWriter, r *http.Request) {
 		WHERE rm.user_id = $1
 	`, userID)
 	if err != nil {
-		http.Error(w, "ルームの取得が失敗しました", http.StatusInternalServerError)
+		http.Error(w, "ルームの取得に失敗しました", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
@@ -52,11 +52,11 @@ func (s *Server) GetUserRoomsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(rooms)
 }
 
-// POST /create-group-room
+// POST /create-group-room グループチャットルームを作成
 func (s *Server) CreateGroupRoomHandler(w http.ResponseWriter, r *http.Request) {
 	userID, err := utils.GetUserIDFromToken(r)
 	if err != nil {
-		http.Error(w, "token無効", http.StatusUnauthorized)
+		http.Error(w, "トークンが無効です", http.StatusUnauthorized) // token無効
 		return
 	}
 
@@ -65,7 +65,7 @@ func (s *Server) CreateGroupRoomHandler(w http.ResponseWriter, r *http.Request) 
 		UserIDs  []int  `json:"user_ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		http.Error(w, "データの解析が失敗しました", http.StatusBadRequest)
+		http.Error(w, "データの解析に失敗しました", http.StatusBadRequest) // データの解析が失敗しました
 		return
 	}
 
@@ -77,38 +77,39 @@ func (s *Server) CreateGroupRoomHandler(w http.ResponseWriter, r *http.Request) 
 			payload.RoomName,
 		).Scan(&roomID)
 		if err != nil {
-			http.Error(w, "グループルーム作成が失敗しました", http.StatusInternalServerError)
+			http.Error(w, "グループルームの作成に失敗しました", http.StatusInternalServerError)
 			return
 		}
 	} else if err != nil {
-		http.Error(w, "ルームのデータの取得が失敗しました", http.StatusInternalServerError)
+		http.Error(w, "ルームデータの取得に失敗しました", http.StatusInternalServerError)
 		return
 	}
 
 	memberSet := append(payload.UserIDs, userID)
 	for _, uid := range memberSet {
-		_, _ = s.DB.Exec(`INSERT INTO room_members (room_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, roomID, uid) //如果已經存在就什麽也不做
+		_, _ = s.DB.Exec(`INSERT INTO room_members (room_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, roomID, uid) // すでに存在する場合は何もしない
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"room_id": roomID,
-		"message": "グループルーム作成が成功しました",
+		"message": "グループルームの作成に成功しました",
 	})
 }
 
-// GET /rooms/{room_id}/join-group
+// GET /rooms/{room_id}/join-group グループに参加
 func (s *Server) JoinGroupRoomHandler(w http.ResponseWriter, r *http.Request) {
 	userID, err := utils.GetUserIDFromToken(r)
 	if err != nil {
-		http.Error(w, "token無効", http.StatusUnauthorized)
+		http.Error(w, "トークンが無効です", http.StatusUnauthorized) // token無効
 		return
 	}
-	/////在maingo的路由器中定義的url中取得變數
+
+	///// ルーターで定義されたURLから変数を取得
 	vars := mux.Vars(r)
 	roomIDStr := vars["room_id"]
-	roomID, err := strconv.Atoi(roomIDStr) //將字串轉化爲int
+	roomID, err := strconv.Atoi(roomIDStr) // 文字列をintに変換
 	if err != nil {
-		http.Error(w, "room_id無効", http.StatusBadRequest)
+		http.Error(w, "無効な room_id", http.StatusBadRequest) // room_id無効
 		return
 	}
 
@@ -117,17 +118,17 @@ func (s *Server) JoinGroupRoomHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "ルームが存在していません", http.StatusNotFound)
 		return
 	} else if err != nil {
-		http.Error(w, "ルームのデータの取得が失敗しました", http.StatusInternalServerError)
+		http.Error(w, "ルームデータの取得に失敗しました", http.StatusInternalServerError)
 		return
 	}
 
 	var exists int
-	///不關心實際的資料，只關心有沒有，有的話回傳1
+	/// 実際のデータではなく、存在チェックをするだけ
 	s.DB.QueryRow("SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2", roomID, userID).Scan(&exists)
 	if exists != 1 {
 		_, err := s.DB.Exec("INSERT INTO room_members (room_id, user_id) VALUES ($1, $2)", roomID, userID)
 		if err != nil {
-			http.Error(w, "入室が失敗しました", http.StatusInternalServerError)
+			http.Error(w, "参加に失敗しました", http.StatusInternalServerError)
 			return
 		}
 	}
@@ -139,7 +140,7 @@ func (s *Server) JoinGroupRoomHandler(w http.ResponseWriter, r *http.Request) {
 		WHERE rm.room_id = $1
 	`, roomID)
 	if err != nil {
-		http.Error(w, "メンバーの取得が失敗しました", http.StatusInternalServerError)
+		http.Error(w, "メンバーの取得に失敗しました", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
@@ -155,7 +156,7 @@ func (s *Server) JoinGroupRoomHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(RoomMembersResponse{Members: members})
 }
 
-// GET /rooms/{room_id}/info查詢房間的名字和是否是群組
+// GET /rooms/{room_id}/info ルーム名とグループかどうかを取得
 func (s *Server) GetRoomInfoHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	roomID := vars["room_id"]
@@ -167,7 +168,7 @@ func (s *Server) GetRoomInfoHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "ルームが存在していません", http.StatusNotFound)
 		return
 	} else if err != nil {
-		http.Error(w, "ルームのデータの取得が失敗しました", http.StatusInternalServerError)
+		http.Error(w, "ルームデータの取得に失敗しました", http.StatusInternalServerError)
 		return
 	}
 
@@ -177,11 +178,11 @@ func (s *Server) GetRoomInfoHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// POST /rooms/{room_id}/leave
+// POST /rooms/{room_id}/leave グループから退出
 func (s *Server) LeaveGroupHandler(w http.ResponseWriter, r *http.Request) {
 	userID, err := utils.GetUserIDFromToken(r)
 	if err != nil {
-		http.Error(w, "token無効", http.StatusUnauthorized)
+		http.Error(w, "トークンが無効です", http.StatusUnauthorized) // token無効
 		return
 	}
 
@@ -190,26 +191,26 @@ func (s *Server) LeaveGroupHandler(w http.ResponseWriter, r *http.Request) {
 
 	roomID, err := strconv.Atoi(roomIDStr)
 	if err != nil {
-		http.Error(w, "room_id無効", http.StatusBadRequest)
+		http.Error(w, "無効な room_id", http.StatusBadRequest) // room_id無効
 		return
 	}
 
-	// 查出用戶名稱
+	// ユーザー名を取得
 	var username string
 	err = s.DB.QueryRow("SELECT username FROM users WHERE id = $1", userID).Scan(&username)
 	if err != nil {
-		http.Error(w, "メンバーの取得が失敗しました", http.StatusInternalServerError)
+		http.Error(w, "メンバーの取得に失敗しました", http.StatusInternalServerError)
 		return
 	}
 
-	// 刪除 room_members 關係
+	// room_members 関係を削除
 	_, err = s.DB.Exec("DELETE FROM room_members WHERE room_id = $1 AND user_id = $2", roomID, userID)
 	if err != nil {
-		http.Error(w, "退室が失敗しました", http.StatusInternalServerError)
+		http.Error(w, "退室に失敗しました", http.StatusInternalServerError)
 		return
 	}
 
-	// 廣播 user_left 給房間中其他人
+	// 退室通知を他のユーザーにブロードキャスト
 	s.WSHub.Broadcast <- WSMessage{
 		RoomID: roomID,
 		Data: map[string]any{
@@ -220,6 +221,6 @@ func (s *Server) LeaveGroupHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{
-		"message": "退室が成功しました",
+		"message": "退室に成功しました",
 	})
 }

@@ -3,12 +3,12 @@ import React, { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
-  const router = useRouter(); // 跳轉頁面用
+  const router = useRouter(); // ページ遷移用
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
 
-  const usernameInputRef = useRef<HTMLInputElement>(null); // 用於綁到 input 來控制
+  const usernameInputRef = useRef<HTMLInputElement>(null);
   const passwordInputRef = useRef<HTMLInputElement>(null);
 
   const handleLogin = async () => {
@@ -16,27 +16,27 @@ export default function LoginPage() {
       const res = await fetch("http://localhost:8081/login", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json", // 告诉后端这是 JSON
+          "Content-Type": "application/json",
         },
+        credentials: "include", // ✅ Cookie を有効にする
         body: JSON.stringify({ username, password }),
       });
 
       if (res.ok) {
         const data = await res.json();
-        alert("登録成功！");
+        alert("ログイン成功！");
         setUsername("");
         setPassword("");
-        sessionStorage.setItem("token", data.token); // ✅ 一定要先设置 token
-        sessionStorage.setItem("currentUser", data.username); // 為了過濾
-        console.log("📦 login 回傳資料:", data);
-        console.log("✅ login 成功寫入：", data.username);
+        // ✅ Cookie に token が保存されているため、sessionStorage は不要
+        console.log("📦 login 応答:", data);
+        console.log("✅ username:", data.username);
         router.push("/chatroom");
       } else {
         const errMsg = await res.text();
-        alert("登録失敗：" + errMsg);
+        alert("ログイン失敗：" + errMsg);
       }
     } catch (error) {
-      alert("连接服务器失败！");
+      alert("サーバー接続に失敗しました！");
       console.error("fetch error:", error);
     }
   };
@@ -44,7 +44,7 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="bg-white p-10 rounded-2xl shadow-md w-full max-w-md relative">
-        {/* 返回按鈕 */}
+        {/* 戻るボタン */}
         <button
           onClick={() => router.push("/")}
           className="absolute top-8 left-5 text-[#2e8b57] hover:text-green-800 transition"
@@ -75,7 +75,7 @@ export default function LoginPage() {
               placeholder="username"
               onKeyDown={(e) => {
                 if (e.key === "ArrowDown") {
-                  passwordInputRef.current?.focus(); // 🔁 下鍵切換
+                  passwordInputRef.current?.focus(); // 🔁 ↓キーで切り替え
                 }
               }}
               className="w-full px-4 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-[#2e8b57]"
@@ -92,9 +92,9 @@ export default function LoginPage() {
               placeholder="password"
               onKeyUp={(e) => {
                 if (e.key === "ArrowUp") {
-                  usernameInputRef.current?.focus(); // 🔁 上鍵切換
+                  usernameInputRef.current?.focus(); // 🔁 ↑キーで切り替え
                 } else if (e.key === "Enter") {
-                  handleLogin(); // ⏎ 回車登入
+                  handleLogin(); // ⏎ でログイン
                 }
               }}
               className="w-full px-4 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-[#2e8b57]"

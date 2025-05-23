@@ -16,31 +16,32 @@ type CreateMessageRequest struct {
 	ThreadRootID *int   `json:"thread_root_id"`
 }
 
+// POST /messages メッセージ送信エンドポイント
 func (s *Server) SendMessageHandler(w http.ResponseWriter, r *http.Request) {
-	log.Println("🟢 收到 POST /messages 請求")
+	log.Println("🟢 POST /messages リクエストを受信")
 
 	userID, err := utils.GetUserIDFromToken(r)
 	if err != nil {
-		log.Println("❌ Token 解碼失敗:", err)
-		http.Error(w, "未登录", http.StatusUnauthorized)
+		log.Println("❌ トークンの解析に失敗:", err)                     // Token 解碼失敗
+		http.Error(w, "ログインされていません", http.StatusUnauthorized) // 未登录
 		return
 	}
 
 	var req CreateMessageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Println("❌ JSON 解碼失敗:", err)
-		http.Error(w, "请求格式错误", http.StatusBadRequest)
+		log.Println("❌ JSON デコード失敗:", err)                       // JSON 解碼失敗
+		http.Error(w, "リクエスト形式が正しくありません", http.StatusBadRequest) // 请求格式错误
 		return
 	}
 
 	if req.RoomID <= 0 {
-		http.Error(w, "无效 room_id", http.StatusBadRequest)
+		http.Error(w, "無効な room_id", http.StatusBadRequest) // 无效 room_id
 		return
 	}
 
 	now := time.Now()
 
-	// ✅ 寫入資料庫並取出自動產生的訊息 ID
+	// ✅ データベースに挿入して ID を取得
 	var messageID int
 	err = s.DB.QueryRow(`
 		INSERT INTO messages (room_id, sender_id, content, created_at, updated_at, thread_root_id)
@@ -49,20 +50,20 @@ func (s *Server) SendMessageHandler(w http.ResponseWriter, r *http.Request) {
 	`, req.RoomID, userID, req.Content, now, now, req.ThreadRootID).Scan(&messageID)
 
 	if err != nil {
-		log.Println("❌ 資料庫寫入失敗:", err)
-		http.Error(w, "数据库错误", http.StatusInternalServerError)
+		log.Println("❌ データベース書き込み失敗:", err)                        // 資料庫寫入失敗
+		http.Error(w, "データベースエラー", http.StatusInternalServerError) // 数据库错误
 		return
 	}
 
-	// ✅ 查詢 sender 使用者名稱
+	// ✅ 送信者のユーザー名を取得
 	var senderName string
 	err = s.DB.QueryRow(`SELECT username FROM users WHERE id = $1`, userID).Scan(&senderName)
 	if err != nil {
-		log.Println("❌ 查詢發送者名稱失敗:", err)
-		senderName = "Unknown"
+		log.Println("❌ 送信者名の取得失敗:", err) // 查詢發送者名稱失敗
+		senderName = "不明"
 	}
 
-	// ✅ 廣播至該房間所有連線用戶
+	// ✅ 該当ルームに WebSocket 経由でブロードキャスト
 	s.WSHub.Broadcast <- WSMessage{
 		RoomID: req.RoomID,
 		Data: map[string]any{
@@ -77,66 +78,16 @@ func (s *Server) SendMessageHandler(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	log.Println("✅ 資料庫寫入與廣播成功")
+	log.Println("✅ データベースへの書き込みとブロードキャスト成功") // 資料庫寫入與廣播成功
 	w.WriteHeader(http.StatusCreated)
 }
 
-// func (s *Server) SendMessageHandler(w http.ResponseWriter, r *http.Request) {
-// 	log.Println("🟢 收到 POST /messages 請求")
-
-// 	userID, err := utils.GetUserIDFromToken(r) // 從 JWT 中取出 userID
-// 	if err != nil {
-// 		log.Println("❌ Token 解碼失敗:", err)
-// 		http.Error(w, "未登录", http.StatusUnauthorized)
-// 		return
-// 	}
-// 	log.Println("🟢 寫入訊息，userID:", userID)
-
-// 	var req CreateMessageRequest
-// 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-// 		log.Println("❌ JSON 解碼失敗:", err)
-// 		http.Error(w, "请求格式错误", http.StatusBadRequest)
-// 		return
-// 	}
-// 	log.Printf("📦 room_id: %d, content: %s\n", req.RoomID, req.Content)
-
-// 	if req.RoomID <= 0 {
-// 		http.Error(w, "无效 room_id", http.StatusBadRequest)
-// 		return
-// 	}
-
-// 	now := time.Now()
-// 	_, err = s.DB.Exec(`
-// 		INSERT INTO messages (room_id, sender_id, content, created_at, updated_at, thread_root_id)
-// 		VALUES ($1, $2, $3, $4, $5, $6)
-// 	`, req.RoomID, userID, req.Content, now, now, req.ThreadRootID)
-// 	if err != nil {
-// 		log.Println("❌ 寫入資料庫失敗:", err)
-// 		http.Error(w, "数据库错误", http.StatusInternalServerError)
-// 		return
-// 	}
-
-//   	// ...插入資料後...
-// 	s.WSHub.Broadcast <- WSMessage{
-// 		RoomID: req.RoomID,
-// 		Data: map[string]any{
-// 			"type": "new_message",
-// 			"message": map[string]any{
-// 				"sender":  userID,
-// 				"content": req.Content,
-// 			},
-// 		},
-// 	}
-
-// 	log.Println("✅ 資料庫寫入成功")
-// 	w.WriteHeader(http.StatusCreated)
-// }
-
+// GET /messages ルームのメッセージ一覧を取得
 func (s *Server) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	roomIDStr := r.URL.Query().Get("room_id")
 	roomID, err := strconv.Atoi(roomIDStr)
 	if err != nil {
-		http.Error(w, "无效 room_id", http.StatusBadRequest)
+		http.Error(w, "無効な room_id", http.StatusBadRequest) // 无效 room_id
 		return
 	}
 
@@ -152,7 +103,7 @@ func (s *Server) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 		ORDER BY m.created_at ASC
 	`, roomID)
 	if err != nil {
-		http.Error(w, "数据库查询错误", http.StatusInternalServerError)
+		http.Error(w, "データベースのクエリに失敗しました", http.StatusInternalServerError) // 数据库查询错误
 		return
 	}
 	defer rows.Close()
@@ -166,7 +117,7 @@ func (s *Server) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 		CreatedAt    time.Time `json:"created_at"`
 		UpdatedAt    time.Time `json:"updated_at"`
 		ThreadRootID *int      `json:"thread_root_id,omitempty"`
-		Attachment   *string   `json:"attachment,omitempty"` // ✅ 新增附件欄位
+		Attachment   *string   `json:"attachment,omitempty"` // ✅ 添付ファイルフィールド
 	}
 
 	var messages []MessageResponse
@@ -178,10 +129,10 @@ func (s *Server) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 			&msg.Content, &msg.CreatedAt, &msg.UpdatedAt, &msg.ThreadRootID,
 			&attachment,
 		); err != nil {
-			log.Println("❌ 資料掃描失敗:", err)
+			log.Println("❌ データ読み取り失敗:", err) // 資料掃描失敗
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{"error": "读取数据错误"})
+			json.NewEncoder(w).Encode(map[string]string{"error": "データの取得に失敗しました"})
 			return
 		}
 		if attachment.Valid {

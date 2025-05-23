@@ -16,27 +16,27 @@ import (
 func (s *Server) UploadMessageAttachmentHandler(w http.ResponseWriter, r *http.Request) {
 	userID, err := utils.GetUserIDFromToken(r)
 	if err != nil {
-		http.Error(w, "未登入", http.StatusUnauthorized)
+		http.Error(w, "ログインされていません", http.StatusUnauthorized) // 未登入
 		return
 	}
 
-	err = r.ParseMultipartForm(10 << 20) // 最多 10MB
+	err = r.ParseMultipartForm(10 << 20) // 最大 10MB
 	if err != nil {
-		http.Error(w, "檔案格式錯誤", http.StatusBadRequest)
+		http.Error(w, "ファイル形式エラー", http.StatusBadRequest) // 檔案格式錯誤
 		return
 	}
 
 	file, handler, err := r.FormFile("file")
 	if err != nil {
-		http.Error(w, "未提供檔案", http.StatusBadRequest)
+		http.Error(w, "ファイルが提供されていません", http.StatusBadRequest) // 未提供檔案
 		return
 	}
 	defer file.Close()
 
-	roomIDStr := r.FormValue("room_id") //表單欄位（比如你上傳檔案時）
+	roomIDStr := r.FormValue("room_id") // フォームフィールド（例：ファイルアップロード時）
 	roomID, err := strconv.Atoi(roomIDStr)
 	if err != nil {
-		http.Error(w, "無效的 room_id", http.StatusBadRequest)
+		http.Error(w, "無効な room_id", http.StatusBadRequest) // 無效的 room_id
 		return
 	}
 
@@ -46,7 +46,7 @@ func (s *Server) UploadMessageAttachmentHandler(w http.ResponseWriter, r *http.R
 
 	out, err := os.Create(fullPath)
 	if err != nil {
-		http.Error(w, "無法儲存檔案", http.StatusInternalServerError)
+		http.Error(w, "ファイル保存に失敗しました", http.StatusInternalServerError) // 無法儲存檔案
 		return
 	}
 	defer out.Close()
@@ -59,7 +59,7 @@ func (s *Server) UploadMessageAttachmentHandler(w http.ResponseWriter, r *http.R
 		VALUES ($1, $2, '', $3, $4) RETURNING id
 	`, roomID, userID, now, now).Scan(&messageID)
 	if err != nil {
-		http.Error(w, "寫入訊息失敗", http.StatusInternalServerError)
+		http.Error(w, "メッセージ書き込みに失敗しました", http.StatusInternalServerError) // 寫入訊息失敗
 		return
 	}
 
@@ -68,15 +68,15 @@ func (s *Server) UploadMessageAttachmentHandler(w http.ResponseWriter, r *http.R
 		VALUES ($1, $2, $3)
 	`, messageID, fileName, now)
 	if err != nil {
-		http.Error(w, "寫入附件失敗", http.StatusInternalServerError)
+		http.Error(w, "添付ファイルの保存に失敗しました", http.StatusInternalServerError) // 寫入附件失敗
 		return
 	}
 
-	// 查發送者名稱
+	// 送信者名を取得
 	var sender string
 	_ = s.DB.QueryRow("SELECT username FROM users WHERE id = $1", userID).Scan(&sender)
 
-	// 推播 WebSocket
+	// WebSocket 経由で新メッセージをブロードキャスト
 	s.WSHub.Broadcast <- WSMessage{
 		RoomID: roomID,
 		Data: map[string]any{
@@ -85,7 +85,7 @@ func (s *Server) UploadMessageAttachmentHandler(w http.ResponseWriter, r *http.R
 				"id":         messageID,
 				"room_id":    roomID,
 				"sender":     sender,
-				"content":    "", // 空內容
+				"content":    "", // 空のメッセージ
 				"attachment": "/uploads/" + fileName,
 				"created_at": now.Format(time.RFC3339),
 			},
@@ -94,7 +94,7 @@ func (s *Server) UploadMessageAttachmentHandler(w http.ResponseWriter, r *http.R
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{
-		"message":   "上傳成功",
+		"message":   "アップロード成功", // 上傳成功
 		"file_path": "/uploads/" + fileName,
 	})
 }
