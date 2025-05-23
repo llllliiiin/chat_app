@@ -1,7 +1,8 @@
-// "use client" と各種 Hook を引き続き利用
 "use client";
+import EmojiPicker from 'emoji-picker-react';
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
+
 
 export default function GroupChatRoomContent() {
   const wsRef = useRef<WebSocket | null>(null);
@@ -22,6 +23,8 @@ export default function GroupChatRoomContent() {
   const [webSocketStatus, setWebSocketStatus] = useState<string>("undefined");
   const [systemMessage, setSystemMessage] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
   useEffect(() => {
     // ✅ /me API 経由で現在のユーザー名を取得
@@ -356,10 +359,28 @@ export default function GroupChatRoomContent() {
                 <input type="file" id="file-upload" style={{ display: "none" }} onChange={handleFileUpload} />
                 <input type="file" accept="image/*" id="image-upload" style={{ display: "none" }} onChange={handleImageUpload} />
 
-                <div className="flex space-x-2 text-xl text-gray-600">
+                <div className="relative flex space-x-2 text-xl text-gray-600">
                   <button onClick={() => document.getElementById("file-upload")?.click()} title="ファイル">📎</button>
                   <button onClick={() => document.getElementById("image-upload")?.click()} title="画像">🖼️</button>
-                  <button onClick={() => alert("スタンプ機能は未実装です")} title="スタンプ">💬</button>
+                  <button onClick={() => setShowEmojiPicker(prev => !prev)} title="絵文字">😊</button>
+                  {showEmojiPicker && (
+                    <div
+                      className="absolute z-50 bg-white rounded shadow-lg origin-bottom-left"
+                      style={{
+                        bottom: '100%',
+                        left: 0,
+                        transform: 'translateY(-10px) scale(0.75)', // 等比缩小整个 UI
+                        transformOrigin: 'bottom left',
+                      }}
+                    >
+                      <EmojiPicker
+                        onEmojiClick={(emojiData) => {
+                          setMessage((prev) => prev + emojiData.emoji); // 插入的是 emoji 字符，不受视觉缩放影响
+                          setShowEmojiPicker(false);
+                        }}
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -379,6 +400,9 @@ export default function GroupChatRoomContent() {
                   }}
                 />
               </div>
+
+            
+
 
               {/* 送信按鈕 */}
               <div className="ml-3">
