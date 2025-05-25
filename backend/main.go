@@ -45,6 +45,11 @@ func main() {
 	r.Handle("/messages", middleware.JWTAuthMiddleware(http.HandlerFunc(s.SendMessageHandler))).Methods("POST")
 	r.Handle("/messages", middleware.JWTAuthMiddleware(http.HandlerFunc(s.GetMessagesHandler))).Methods("GET")
 
+	// メッセージ撤回（2分以内・本人限定・全員から削除）
+	r.Handle("/messages/{message_id}/revoke", middleware.JWTAuthMiddleware(http.HandlerFunc(s.RevokeMessageHandler))).Methods("POST")
+	// メッセージ削除（本人の画面からのみ非表示）
+	r.Handle("/messages/{message_id}/hide", middleware.JWTAuthMiddleware(http.HandlerFunc(s.HideMessageHandler))).Methods("POST")
+
 	// ✅ グループチャット関連のエンドポイント（命名規則として rooms 使用）
 	r.Handle("/rooms", middleware.JWTAuthMiddleware(http.HandlerFunc(s.GetUserRoomsHandler))).Methods("GET")
 	r.Handle("/create-group-room", middleware.JWTAuthMiddleware(http.HandlerFunc(s.CreateGroupRoomHandler))).Methods("POST")

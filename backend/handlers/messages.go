@@ -82,31 +82,82 @@ func (s *Server) SendMessageHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 }
 
+// // GET /messages ルームのメッセージ一覧を取得
+// func (s *Server) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
+// 	roomIDStr := r.URL.Query().Get("room_id")
+// 	roomID, err := strconv.Atoi(roomIDStr)
+// 	if err != nil {
+// 		http.Error(w, "無効な room_id", http.StatusBadRequest) // 无效 room_id
+// 		return
+// 	}
+
+// 	rows, err := s.DB.Query(`
+// 		SELECT
+// 			m.id, m.room_id, m.sender_id, u.username,
+// 			m.content, m.created_at, m.updated_at, m.thread_root_id,
+// 			a.file_name -- nullable
+// 		FROM messages m
+// 		JOIN users u ON m.sender_id = u.id
+// 		LEFT JOIN message_attachments a ON a.message_id = m.id
+// 		WHERE m.room_id = $1
+// 		ORDER BY m.created_at ASC
+// 	`, roomID)
+// 	if err != nil {
+// 		http.Error(w, "データベースのクエリに失敗しました", http.StatusInternalServerError) // 数据库查询错误
+// 		return
+// 	}
+// 	defer rows.Close()
+
+// 	type MessageResponse struct {
+// 		ID           int       `json:"id"`
+// 		RoomID       int       `json:"room_id"`
+// 		SenderID     int       `json:"sender_id"`
+// 		Sender       string    `json:"sender"`
+// 		Content      string    `json:"content"`
+// 		CreatedAt    time.Time `json:"created_at"`
+// 		UpdatedAt    time.Time `json:"updated_at"`
+// 		ThreadRootID *int      `json:"thread_root_id,omitempty"`
+// 		Attachment   *string   `json:"attachment,omitempty"` // ✅ 添付ファイルフィールド
+// 	}
+
+// 	var messages []MessageResponse
+// 	for rows.Next() {
+// 		var msg MessageResponse
+// 		var attachment sql.NullString
+// 		if err := rows.Scan(
+// 			&msg.ID, &msg.RoomID, &msg.SenderID, &msg.Sender,
+// 			&msg.Content, &msg.CreatedAt, &msg.UpdatedAt, &msg.ThreadRootID,
+// 			&attachment,
+// 		); err != nil {
+// 			log.Println("❌ データ読み取り失敗:", err) // 資料掃描失敗
+// 			w.Header().Set("Content-Type", "application/json")
+// 			w.WriteHeader(http.StatusInternalServerError)
+// 			json.NewEncoder(w).Encode(map[string]string{"error": "データの取得に失敗しました"})
+// 			return
+// 		}
+// 		if attachment.Valid {
+// 			msg.Attachment = &attachment.String
+// 		}
+// 		messages = append(messages, msg)
+// 	}
+
+//		json.NewEncoder(w).Encode(map[string]interface{}{"messages": messages})
+//	}
+//
 // GET /messages ルームのメッセージ一覧を取得
 func (s *Server) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	roomIDStr := r.URL.Query().Get("room_id")
 	roomID, err := strconv.Atoi(roomIDStr)
 	if err != nil {
-		http.Error(w, "無効な room_id", http.StatusBadRequest) // 无效 room_id
+		http.Error(w, "無効な room_id", http.StatusBadRequest)
 		return
 	}
 
-	rows, err := s.DB.Query(`
-		SELECT 
-			m.id, m.room_id, m.sender_id, u.username, 
-			m.content, m.created_at, m.updated_at, m.thread_root_id,
-			a.file_name -- nullable
-		FROM messages m
-		JOIN users u ON m.sender_id = u.id
-		LEFT JOIN message_attachments a ON a.message_id = m.id
-		WHERE m.room_id = $1
-		ORDER BY m.created_at ASC
-	`, roomID)
+	userID, err := utils.GetUserIDFromToken(r)
 	if err != nil {
-		http.Error(w, "データベースのクエリに失敗しました", http.StatusInternalServerError) // 数据库查询错误
+		http.Error(w, "ログインが必要です", http.StatusUnauthorized)
 		return
 	}
-	defer rows.Close()
 
 	type MessageResponse struct {
 		ID           int       `json:"id"`
@@ -117,8 +168,29 @@ func (s *Server) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 		CreatedAt    time.Time `json:"created_at"`
 		UpdatedAt    time.Time `json:"updated_at"`
 		ThreadRootID *int      `json:"thread_root_id,omitempty"`
-		Attachment   *string   `json:"attachment,omitempty"` // ✅ 添付ファイルフィールド
+		Attachment   *string   `json:"attachment,omitempty"`
 	}
+
+	rows, err := s.DB.Query(`
+		SELECT 
+			m.id, m.room_id, m.sender_id, u.username, 
+			m.content, m.created_at, m.updated_at, m.thread_root_id,
+			a.file_name
+		FROM messages m
+		JOIN users u ON m.sender_id = u.id
+		LEFT JOIN message_attachments a ON a.message_id = m.id
+		WHERE m.room_id = $1
+		AND NOT EXISTS (
+			SELECT 1 FROM message_hidden h 
+			WHERE h.message_id = m.id AND h.user_id = $2
+		)
+		ORDER BY m.created_at ASC
+	`, roomID, userID)
+	if err != nil {
+		http.Error(w, "データベースのクエリに失敗しました", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
 
 	var messages []MessageResponse
 	for rows.Next() {
@@ -129,7 +201,7 @@ func (s *Server) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 			&msg.Content, &msg.CreatedAt, &msg.UpdatedAt, &msg.ThreadRootID,
 			&attachment,
 		); err != nil {
-			log.Println("❌ データ読み取り失敗:", err) // 資料掃描失敗
+			log.Println("❌ データ読み取り失敗:", err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]string{"error": "データの取得に失敗しました"})
