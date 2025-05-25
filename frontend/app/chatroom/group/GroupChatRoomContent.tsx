@@ -156,13 +156,17 @@ export default function GroupChatRoomContent() {
     if (!messages || !token || !currentUser) return;
     const lastMsg = messages[messages.length - 1];
     messages.forEach((msg) => {
-      const isSelfLastMsg = msg.id === lastMsg?.id && msg.sender === currentUser;
-      if (msg.sender !== currentUser && !isSelfLastMsg) {
-        fetch(`http://localhost:8081/messages/${msg.id}/markread`, {
-          method: "POST",
-          credentials: "include",
-        });
-      }
+      // const isSelfLastMsg = msg.id === lastMsg?.id && msg.sender === currentUser;
+      // if (!isSelfLastMsg) {
+      //   fetch(`http://localhost:8081/messages/${msg.id}/markread`, {
+      //     method: "POST",
+      //     credentials: "include",
+      //   });
+      // }
+      fetch(`http://localhost:8081/messages/${msg.id}/markread`, {
+        method: "POST",
+        credentials: "include",
+      });
     });
   }, [messages, currentUser, token]);
 

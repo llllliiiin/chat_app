@@ -38,6 +38,10 @@ export default function UserPage() {
 
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
+  const [actionBoxVisible, setActionBoxVisible] = useState<number | null>(null);
+  const actionBoxRefs = useRef<Map<number, HTMLDivElement | null>>(new Map());
+
+
   // 初期化：ログインチェック & ユーザー一覧の取得
   useEffect(() => {
     fetch("http://localhost:8081/me", { credentials: "include" })
@@ -127,6 +131,10 @@ export default function UserPage() {
 
     ws.onmessage = (event) => {
       const parsed = JSON.parse(event.data);
+
+      if (parsed.type === "message_revoked" && parsed.message_id) {
+        setMessages((prev) => prev.filter((m) => m.id !== parsed.message_id));
+      }
 
       if (parsed.type === "read_update" && parsed.message_id) {
         setMessageReads((prev) => ({
@@ -258,7 +266,6 @@ export default function UserPage() {
   }, [currentUser]); // 👈 依賴 currentUser
 
 
-
   const handleUserClick = async (targetUser: string) => {
     const res = await fetch("http://localhost:8081/get-or-create-room", {
       method: "POST",
@@ -308,6 +315,58 @@ export default function UserPage() {
       }, 300);
     } catch (err) {
       alert("送信失敗");
+    }
+  };
+
+    ///////////////////////
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+
+      // 遍历所有菜单浮出的 ref
+      for (const [, ref] of actionBoxRefs.current) {
+        if (ref && ref.contains(target)) {
+          return; // 点在菜单内部，不关闭
+        }
+      }
+
+      // 点在外部，关闭菜单
+      setActionBoxVisible(null);
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+  /////////////////////////
+
+  ///revoke
+  const handleRevoke = async (msgId: number) => {
+    const res = await fetch(`http://localhost:8081/messages/${msgId}/revoke`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (res.ok) {
+      setMessages(prev => prev.filter(m => m.id !== msgId));
+      actionBoxRefs.current.delete(msgId); // ← 清理对应引用
+    } else {
+      alert("撤回に失敗しました（2分以上経過した可能性があります）");
+    }
+  };
+
+   //hide
+  const handleHide = async (msgId: number) => {
+    const res = await fetch(`http://localhost:8081/messages/${msgId}/hide`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (res.ok) {
+      setMessages(prev => prev.filter(m => m.id !== msgId));
+      actionBoxRefs.current.delete(msgId); // ← 清理对应引用
+    } else {
+      alert("削除に失敗しました");
     }
   };
 
@@ -440,31 +499,75 @@ export default function UserPage() {
               const isSender = msg.sender === currentUser;
               return (
                 <div key={msg.id} className={`flex ${isSender ? "justify-end" : "justify-start"}`}>
-                  <div className={`p-2 rounded-lg max-w-xs ${isSender ? "bg-blue-500" : "bg-green-700"} text-white`}>
-                    <div className="text-xs font-semibold mb-1">{msg.sender}</div>
-                    <div>
-                      {msg.content && <div>{msg.content}</div>}
-                      {msg.attachment && msg.attachment.match(/\.(jpg|jpeg|png|gif)$/i) ? (
-                        <img
-                          src={`http://localhost:8081${msg.attachment.startsWith("/uploads/") ? msg.attachment : `/uploads/${msg.attachment}`}`}
-                          alt="attachment"
-                          className="mt-2 rounded shadow max-w-full h-auto"
-                        />
-                      ) : msg.attachment ? (
-                        <a
-                          href={`http://localhost:8081${msg.attachment.startsWith("/uploads/") ? msg.attachment : `/uploads/${msg.attachment}`}`}
-                          target="_blank"
-                          className="text-blue-200 underline text-sm block mt-2"
+                  <div className={`flex items-end ${isSender ? "flex-row" : "flex-row-reverse"} group relative`}>
+                    
+                    {/* 三点按钮 */}
+                    <div className="relative z-10">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setActionBoxVisible((prev) => (prev === msg.id ? null : msg.id));
+                        }}
+                        className="w-6 h-6 flex items-center justify-center rounded-full text-[#2e8b57] hover:bg-[#2e8b57]/20 text-sm transition opacity-0 group-hover:opacity-100"
+                      >
+                        ⋯
+                      </button>
+
+                      {/* 对方：左上浮出 */}
+                      {!isSender && actionBoxVisible === msg.id && (
+                        <div
+                          ref={(el) => {
+                            actionBoxRefs.current.set(msg.id, el);
+                          }}
+                          className="absolute bottom-full mb-2 left-0 bg-white border rounded shadow px-3 py-1 text-sm text-gray-800 whitespace-nowrap z-50 action-box"
+                          onClick={(e) => e.stopPropagation()}
                         >
-                          📎 添付ファイルを開く
-                        </a>
-                      ) : null}
+                          <button
+                            onClick={() => handleHide(msg.id)}
+                            className="hover:underline"
+                          >
+                            削除
+                          </button>
+                        </div>
+                      )}
+
+                      {/* 自己：右上浮出 */}
+                      {isSender && actionBoxVisible === msg.id && (
+                        <div
+                          ref={(el) => {
+                            actionBoxRefs.current.set(msg.id, el);
+                          }}
+                          className="absolute bottom-full mb-2 right-0 bg-white border rounded shadow px-3 py-1 text-sm text-gray-800 whitespace-nowrap z-50 action-box"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            onClick={() => handleHide(msg.id)}
+                            className="hover:underline mr-2"
+                          >
+                            削除
+                          </button>
+                          <button
+                            onClick={() => handleRevoke(msg.id)}
+                            className="hover:underline"
+                          >
+                            送信取消
+                          </button>
+                        </div>
+                      )}
                     </div>
-                    <div className="text-[10px] mt-1 text-right">
-                      {readers.length === 0 ? "未読" : `既読 ${readers.length}人: ${readers.join(", ")}`}
+
+                    {/* 消息气泡 */}
+                    <div className={`ml-2 mr-2 p-2 rounded-lg max-w-xs ${isSender ? "bg-blue-500" : "bg-green-700"} text-white`}>
+                      <div className="text-xs font-semibold mb-1">{msg.sender}</div>
+                      {msg.content && <div>{msg.content}</div>}
+                      {/* 附件逻辑略 */}
+                      <div className="text-[10px] mt-1 text-right">
+                        {readers.length === 0 ? "未読" : `既読 ${readers.length}人: ${readers.join(", ")}`}
+                      </div>
                     </div>
                   </div>
                 </div>
+
               );
             })}
             <div ref={messagesEndRef} />
