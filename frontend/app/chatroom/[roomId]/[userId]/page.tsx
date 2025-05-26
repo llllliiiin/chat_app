@@ -40,6 +40,7 @@ export default function UserPage() {
 
   const [actionBoxVisible, setActionBoxVisible] = useState<number | null>(null);
   const actionBoxRefs = useRef<Map<number, HTMLDivElement | null>>(new Map());
+  const [messageReactions, setMessageReactions] = useState<Record<number, { emoji: string; users: string[] }[]>>({});
 
 
   // 初期化：ログインチェック & ユーザー一覧の取得
@@ -145,16 +146,55 @@ export default function UserPage() {
 
       if (parsed.type === "new_message" && parsed.message) {
         const msg = parsed.message;
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: msg.id,
-            sender: msg.sender,
-            content: msg.content,
-            attachment: msg.attachment || undefined,
-          },
-        ]);
+        const content = msg.content || "";
+
+        // ✅ 處理 reaction 類型
+        if (content.startsWith("reaction:")) {
+          const [, emoji, targetIdStr] = content.split(":");
+          const targetId = parseInt(targetIdStr);
+
+          setMessageReactions((prev) => {
+            const oldList = prev[targetId] || [];
+            const existing = oldList.find((r) => r.emoji === emoji);
+            let updated;
+
+            if (existing) {
+              const hasReacted = existing.users.includes(msg.sender);
+              updated = hasReacted
+                ? oldList
+                    .map((r) =>
+                      r.emoji === emoji
+                        ? { ...r, users: r.users.filter((u) => u !== msg.sender) }
+                        : r
+                    )
+                    .filter((r) => r.users.length > 0)
+                : oldList.map((r) =>
+                    r.emoji === emoji
+                      ? {
+                          ...r,
+                          users: [...r.users, msg.sender].filter((v, i, a) => a.indexOf(v) === i),
+                        }
+                      : r
+                  );
+            } else {
+              updated = [...oldList, { emoji, users: [msg.sender] }];
+            }
+
+            return { ...prev, [targetId]: updated };
+          });
+
+          return; // ✅ 不加入普通 message 列表
+        }
+
+        // 普通訊息照常處理
+        setMessages((prev) => [...prev, {
+          id: msg.id,
+          sender: msg.sender,
+          content: msg.content,
+          attachment: msg.attachment || undefined,
+        }]);
       }
+
     };
 
     return () => {
@@ -190,15 +230,44 @@ export default function UserPage() {
     })
       .then((res) => res.json())
       .then((data) => {
-        const msgs = (data.messages || []).map((m: any) => ({
-          id: m.id,
-          content: m.content,
-          sender: m.sender,
-          attachment: m.attachment || undefined,
-          readers: [],
-        }));
-        setMessages(msgs);
+        const rawMessages = data.messages || [];
+
+        const normalMessages: typeof messages = [];
+        const reactionMap: Record<number, Record<string, string[]>> = {};
+
+        for (const m of rawMessages) {
+          if (m.content?.startsWith("reaction:")) {
+            const [, emoji, targetIdStr] = m.content.split(":");
+            const targetId = parseInt(targetIdStr);
+            if (!reactionMap[targetId]) reactionMap[targetId] = {};
+            if (!reactionMap[targetId][emoji]) reactionMap[targetId][emoji] = [];
+            if (!reactionMap[targetId][emoji].includes(m.sender)) {
+              reactionMap[targetId][emoji].push(m.sender);
+            }
+          } else {
+            normalMessages.push({
+              id: m.id,
+              content: m.content,
+              sender: m.sender,
+              attachment: m.attachment || undefined,
+              readers: [],
+            });
+          }
+        }
+
+        setMessages(normalMessages);
+
+        const structured: typeof messageReactions = {};
+        for (const [msgIdStr, emojiGroup] of Object.entries(reactionMap)) {
+          const msgId = parseInt(msgIdStr);
+          structured[msgId] = Object.entries(emojiGroup).map(([emoji, users]) => ({
+            emoji,
+            users,
+          }));
+        }
+        setMessageReactions(structured);
       });
+
   }, [roomId, currentUser]);
 
   const fetchRoomsAndUnreadCounts = async () => {
@@ -264,6 +333,20 @@ export default function UserPage() {
     }, 5000);
     return () => clearInterval(interval);
   }, [currentUser]); // 👈 依賴 currentUser
+  
+  const handleReaction = async (targetMessageId: number, emoji: string) => {
+    await fetch("http://localhost:8081/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        room_id: parseInt(roomId as string),
+        content: `reaction:${emoji}:${targetMessageId}`,
+        thread_root_id: null,
+        mentions: [],
+      }),
+    });
+  };
 
 
   const handleUserClick = async (targetUser: string) => {
@@ -317,7 +400,7 @@ export default function UserPage() {
       alert("送信失敗");
     }
   };
-
+  
     ///////////////////////
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -528,6 +611,11 @@ export default function UserPage() {
                           >
                             削除
                           </button>
+                          <div className="mt-2 flex gap-x-2 justify-start">
+                            <button onClick={() => handleReaction(msg.id, "😄")}>😄</button>
+                            <button onClick={() => handleReaction(msg.id, "👍")}>👍</button>
+                            <button onClick={() => handleReaction(msg.id, "❤️")}>❤️</button>
+                          </div>
                         </div>
                       )}
 
@@ -552,6 +640,11 @@ export default function UserPage() {
                           >
                             送信取消
                           </button>
+                          <div className="mt-2 flex gap-x-2 justify-start">
+                            <button onClick={() => handleReaction(msg.id, "😄")}>😄</button>
+                            <button onClick={() => handleReaction(msg.id, "👍")}>👍</button>
+                            <button onClick={() => handleReaction(msg.id, "❤️")}>❤️</button>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -560,6 +653,19 @@ export default function UserPage() {
                     <div className={`ml-2 mr-2 p-2 rounded-lg max-w-xs ${isSender ? "bg-blue-500" : "bg-green-700"} text-white`}>
                       <div className="text-xs font-semibold mb-1">{msg.sender}</div>
                       {msg.content && <div>{msg.content}</div>}
+
+                      <div className="mt-1 flex space-x-2">
+                        {(messageReactions[msg.id] || []).map(r => (
+                          <div
+                            key={r.emoji}
+                            className="text-sm bg-white text-gray-700 rounded-full px-2 py-1 border"
+                            title={r.users.join(", ")}
+                          >
+                            {r.emoji} {r.users.length}
+                          </div>
+                        ))}
+                      </div>
+
                       {/* 附件逻辑略 */}
                       <div className="text-[10px] mt-1 text-right">
                         {readers.length === 0 ? "未読" : `既読 ${readers.length}人: ${readers.join(", ")}`}

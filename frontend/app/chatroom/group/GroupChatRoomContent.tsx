@@ -31,6 +31,8 @@ export default function GroupChatRoomContent() {
   const [actionBoxVisible, setActionBoxVisible] = useState<number | null>(null);
   const actionBoxRefs = useRef<Map<number, HTMLDivElement | null>>(new Map());
 
+  const [messageReactions, setMessageReactions] = useState<Record<number, { emoji: string; users: string[] }[]>>({});
+
   const [mentions, setMentions] = useState<string[]>([]); // ✅ 追加
   const [showMentionList, setShowMentionList] = useState(false); // ✅ 追加
   const [cursorPos, setCursorPos] = useState<number>(0); // ✅ 追加
@@ -78,7 +80,14 @@ export default function GroupChatRoomContent() {
     })
       .then((res) => res.json())
       .then((data) => {
-        const msgs = (data.messages || []).map((m: any) => ({ id: m.id, content: m.content, sender: m.sender,attachment: m.attachment || undefined,}));
+        const msgs = (data.messages || [])
+          .filter((m: any) => !m.content?.startsWith("reaction:")) // ✅ 過濾掉 reaction 訊息
+          .map((m: any) => ({
+            id: m.id,
+            content: m.content,
+            sender: m.sender,
+            attachment: m.attachment || undefined,
+          }));
         setMessages(msgs);
       });
   }, [roomId, token]);
@@ -116,6 +125,7 @@ export default function GroupChatRoomContent() {
 
     ws.onmessage = (event) => {
       const parsed = JSON.parse(event.data);
+       console.log("💬 收到訊息：", parsed);
       if (parsed.type === "read_update" && parsed.message_id) {
         setMessageReads((prev) => ({ ...prev, [parsed.message_id]: parsed.readers || [] }));
       }
@@ -124,8 +134,65 @@ export default function GroupChatRoomContent() {
       }
       if (parsed.type === "new_message" && parsed.message) {
         const msg = parsed.message;
-        setMessages((prev) => [...prev, { id: msg.id, sender: msg.sender, content: msg.content,attachment: msg.attachment || undefined,  }]);
+        const content = msg.content || "";
+
+        // ✅ 是 reaction 則處理並 return，不再加入 messages
+        if (content.startsWith("reaction:")) {
+          const [, emoji, targetIdStr] = content.split(":");
+          const targetId = parseInt(targetIdStr);
+
+          setMessageReactions((prev) => {
+            const oldList = prev[targetId] || [];
+            const existing = oldList.find((r) => r.emoji === emoji);
+            let updated;
+
+            if (existing) {
+              const hasReacted = existing.users.includes(msg.sender);
+              updated = hasReacted
+                // ❌ 已存在 → 移除該用戶
+                ? oldList
+                    .map((r) =>
+                      r.emoji === emoji
+                        ? { ...r, users: r.users.filter((u) => u !== msg.sender) }
+                        : r
+                    )
+                    .filter((r) => r.users.length > 0)
+                // ✅ 不存在 → 加入該用戶
+                : oldList.map((r) =>
+                    r.emoji === emoji
+                      ? {
+                          ...r,
+                          users: [...r.users, msg.sender].filter(
+                            (v, i, a) => a.indexOf(v) === i
+                          ), // 去重
+                        }
+                      : r
+                  );
+            } else {
+              updated = [{ emoji, users: [msg.sender] }];
+            }
+
+            return { ...prev, [targetId]: updated };
+          });
+
+
+
+          return; // ✅ ✅ ✅ 確保這裡 return，避免 setMessages
+        }
+
+        // ✅ 普通訊息才進入聊天列表
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: msg.id,
+            sender: msg.sender,
+            content: msg.content,
+            attachment: msg.attachment || undefined,
+          },
+        ]);
       }
+
+
         // ✅ 新增：处理提及通知
       if (parsed.type === "mention_notify") {
         if (parsed.to_user && parsed.to_user === currentUserId) {
@@ -151,9 +218,51 @@ export default function GroupChatRoomContent() {
         })
           .then((res) => res.json())
           .then((data) => {
-            const msgs = (data.messages || []).map((m: any) => ({ id: m.id, content: m.content, sender: m.sender,attachment: m.attachment || undefined,}));
-            setMessages(msgs);
+            const rawMessages = data.messages || [];
+
+            const normalMessages: { id: number; content: string; sender: string; attachment?: string }[] = [];
+            const reactionMap: Record<number, Record<string, string[]>> = {};
+
+            for (const m of rawMessages) {
+              if (m.content?.startsWith("reaction:")) {
+                const [, emoji, targetIdStr] = m.content.split(":");
+                const targetId = parseInt(targetIdStr);
+                if (!reactionMap[targetId]) {
+                  reactionMap[targetId] = {};
+                }
+                if (!reactionMap[targetId][emoji]) {
+                  reactionMap[targetId][emoji] = [];
+                }
+                if (!reactionMap[targetId][emoji].includes(m.sender)) {
+                  reactionMap[targetId][emoji].push(m.sender);
+                }
+              } else {
+                normalMessages.push({
+                  id: m.id,
+                  content: m.content,
+                  sender: m.sender,
+                  attachment: m.attachment || undefined,
+                });
+              }
+            }
+
+            // 更新訊息內容
+            setMessages(normalMessages);
+
+            // 將 reactionMap 轉換成符合 UI 結構的 messageReactions
+            const structuredReactions: Record<number, { emoji: string; users: string[] }[]> = {};
+            for (const [msgIdStr, emojiGroup] of Object.entries(reactionMap)) {
+              const msgId = parseInt(msgIdStr);
+              structuredReactions[msgId] = Object.entries(emojiGroup).map(([emoji, users]) => ({
+                emoji,
+                users,
+              }));
+            }
+
+            // 更新 emoji 狀態
+            setMessageReactions(structuredReactions);
           });
+
       }
     };
 
@@ -270,6 +379,20 @@ export default function GroupChatRoomContent() {
     } else {
       alert("削除に失敗しました");
     }
+  };
+
+    const handleReaction = async (targetMessageId: number, emoji: string) => {
+    await fetch("http://localhost:8081/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        room_id: parseInt(roomId!),
+        content: `reaction:${emoji}:${targetMessageId}`,
+        thread_root_id: null,
+        mentions: [],
+      }),
+    });
   };
 
   ////image
@@ -419,6 +542,11 @@ export default function GroupChatRoomContent() {
                           >
                             削除
                           </button>
+                          <div className="mt-2 flex space-x-1">
+                            <button onClick={() => handleReaction(msg.id, "😄")}>😄</button>
+                            <button onClick={() => handleReaction(msg.id, "👍")}>👍</button>
+                            <button onClick={() => handleReaction(msg.id, "❤️")}>❤️</button>
+                          </div>
                         </div>
                       )}
 
@@ -443,6 +571,11 @@ export default function GroupChatRoomContent() {
                           >
                             送信取消
                           </button>
+                           <div className="mt-2 flex space-x-1">
+                            <button onClick={() => handleReaction(msg.id, "😄")}>😄</button>
+                            <button onClick={() => handleReaction(msg.id, "👍")}>👍</button>
+                            <button onClick={() => handleReaction(msg.id, "❤️")}>❤️</button>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -455,6 +588,20 @@ export default function GroupChatRoomContent() {
                     >
                       <div className="text-xs font-semibold mb-1">{msg.sender}</div>
                       {msg.content && <div>{msg.content}</div>}
+
+                      {/* Reaction 表示區塊 */}
+                      <div className="mt-1 flex space-x-2">
+                        {(messageReactions[msg.id] || []).map(r => (
+                          <div
+                            key={r.emoji}
+                            className="text-sm bg-white text-gray-700 rounded-full px-2 py-1 border"
+                            title={r.users.join(", ")} // tooltip 顯示使用者
+                          >
+                            {r.emoji} {r.users.length}
+                          </div>
+                        ))}
+                      </div>
+
                       {msg.attachment && msg.attachment.match(/\.(jpg|jpeg|png|gif)$/i) ? (
                         <img
                           src={`http://localhost:8081${
