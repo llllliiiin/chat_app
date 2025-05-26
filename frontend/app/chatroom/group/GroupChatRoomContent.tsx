@@ -2,6 +2,9 @@
 import EmojiPicker from 'emoji-picker-react';
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
+import MessageItem from "./components/MessageItem";
+import AttachmentPreview from "./components/AttachmentPreview";
+
 
 
 export default function GroupChatRoomContent() {
@@ -19,7 +22,7 @@ export default function GroupChatRoomContent() {
   const [roomTitle, setRoomTitle] = useState<string>("グループチャット");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [messageReads, setMessageReads] = useState<Record<number, string[]>>({});
-  const [messages, setMessages] = useState<{ id: number; content: string; sender: string; attachment?: string;}[]>([]);
+  const [messages, setMessages] = useState<{ id: number; content: string; sender: string; thread_root_id?: number | null; attachment?: string;}[]>([]);
 
   const [webSocketStatus, setWebSocketStatus] = useState<string>("undefined");
   const [systemMessage, setSystemMessage] = useState<string | null>(null);
@@ -36,6 +39,8 @@ export default function GroupChatRoomContent() {
   const [mentions, setMentions] = useState<string[]>([]); // ✅ 追加
   const [showMentionList, setShowMentionList] = useState(false); // ✅ 追加
   const [cursorPos, setCursorPos] = useState<number>(0); // ✅ 追加
+  const [replyTo, setReplyTo] = useState<{ id: number; content: string; sender: string } | null>(null);
+
 
 
   useEffect(() => {
@@ -86,6 +91,7 @@ export default function GroupChatRoomContent() {
             id: m.id,
             content: m.content,
             sender: m.sender,
+            thread_root_id: m.thread_root_id, 
             attachment: m.attachment || undefined,
           }));
         setMessages(msgs);
@@ -125,7 +131,7 @@ export default function GroupChatRoomContent() {
 
     ws.onmessage = (event) => {
       const parsed = JSON.parse(event.data);
-       console.log("💬 收到訊息：", parsed);
+      console.log("💬 收到訊息：", parsed);
       if (parsed.type === "read_update" && parsed.message_id) {
         setMessageReads((prev) => ({ ...prev, [parsed.message_id]: parsed.readers || [] }));
       }
@@ -171,27 +177,55 @@ export default function GroupChatRoomContent() {
             } else {
               updated = [{ emoji, users: [msg.sender] }];
             }
-
             return { ...prev, [targetId]: updated };
           });
-
-
 
           return; // ✅ ✅ ✅ 確保這裡 return，避免 setMessages
         }
 
-        // ✅ 普通訊息才進入聊天列表
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: msg.id,
-            sender: msg.sender,
-            content: msg.content,
-            attachment: msg.attachment || undefined,
-          },
-        ]);
-      }
+      //   // ✅ 普通訊息才進入聊天列表
+      //   setMessages((prev) => [
+      //     ...prev,
+      //     {
+      //       id: msg.id,
+      //       sender: msg.sender,
+      //       content: msg.content,
+      //       thread_root_id: msg.thread_root_id, 
+      //       attachment: msg.attachment || undefined,
+      //     },
+      //   ]);
+      // }
+       setMessages((prev) => {
+        const newMessages = [...prev];
 
+        // 如果这条消息是子消息（thread），就检查 parent 是否已存在
+        if (msg.thread_root_id) {
+          const hasParent = prev.some((m) => m.id === msg.thread_root_id);
+
+          // 如果没有 parent，而且服务器有发 parent_message，就补上
+          if (!hasParent && parsed.parent_message) {
+            newMessages.push({
+              id: parsed.parent_message.id,
+              sender: parsed.parent_message.sender,
+              content: parsed.parent_message.content,
+              thread_root_id: parsed.parent_message.thread_root_id,
+              attachment: parsed.parent_message.attachment || undefined,
+            });
+          }
+        }
+
+        // 最后加入当前消息本身
+        newMessages.push({
+          id: msg.id,
+          sender: msg.sender,
+          content: msg.content,
+          thread_root_id: msg.thread_root_id,
+          attachment: msg.attachment || undefined,
+        });
+
+        return newMessages;
+      });
+    }
 
         // ✅ 新增：处理提及通知
       if (parsed.type === "mention_notify") {
@@ -220,7 +254,14 @@ export default function GroupChatRoomContent() {
           .then((data) => {
             const rawMessages = data.messages || [];
 
-            const normalMessages: { id: number; content: string; sender: string; attachment?: string }[] = [];
+            const normalMessages: {
+              id: number;
+              content: string;
+              sender: string;
+              thread_root_id?: number | null;
+              attachment?: string;
+            }[] = [];
+
             const reactionMap: Record<number, Record<string, string[]>> = {};
 
             for (const m of rawMessages) {
@@ -241,6 +282,7 @@ export default function GroupChatRoomContent() {
                   id: m.id,
                   content: m.content,
                   sender: m.sender,
+                  thread_root_id: m.thread_root_id,
                   attachment: m.attachment || undefined,
                 });
               }
@@ -309,11 +351,12 @@ export default function GroupChatRoomContent() {
        body: JSON.stringify({
         room_id: parsedRoomId,
         content: message,
-        thread_root_id: null,
+        thread_root_id: replyTo?.id ?? null, // ✅ 設定 parent message id
         mentions: foundMentions,
       }),
     });
     setMessage("");
+    setReplyTo(null); // ✅ 清空 reply 狀態
     setMentions([]);
   };
 ///////////////////////
@@ -507,135 +550,31 @@ export default function GroupChatRoomContent() {
             {messages.map((msg) => {
               const readers = messageReads[msg.id] || [];
               const isSender = msg.sender === currentUser;
+              const root = messages.find(m => m.id === msg.thread_root_id);
+
               return (
-                <div
+                <MessageItem
                   key={msg.id}
-                  className={`flex items-end ${isSender ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`flex items-end ${isSender ? "flex-row" : "flex-row-reverse"} group relative`}
-                  >
-                    {/* 三点按钮 */}
-                    <div className="relative z-10">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setActionBoxVisible((prev) => (prev === msg.id ? null : msg.id));
-                        }}
-                        className="w-6 h-6 flex items-center justify-center rounded-full text-[#2e8b57] hover:bg-[#2e8b57]/20 text-sm transition opacity-0 group-hover:opacity-100"
-                      >
-                        ⋯
-                      </button>
-
-                      {/* 对方：左上浮出 */}
-                      {!isSender && actionBoxVisible === msg.id && (
-                        <div
-                          ref={(el) => {
-                            actionBoxRefs.current.set(msg.id, el);
-                          }}
-                          className="absolute bottom-full mb-2 left-0 bg-white border rounded shadow px-3 py-1 text-sm text-gray-800 whitespace-nowrap z-50 action-box"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <button
-                            onClick={() => handleHide(msg.id)}
-                            className="hover:underline"
-                          >
-                            削除
-                          </button>
-                          <div className="mt-2 flex space-x-1">
-                            <button onClick={() => handleReaction(msg.id, "😄")}>😄</button>
-                            <button onClick={() => handleReaction(msg.id, "👍")}>👍</button>
-                            <button onClick={() => handleReaction(msg.id, "❤️")}>❤️</button>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* 自己：右上浮出 */}
-                      {isSender && actionBoxVisible === msg.id && (
-                        <div
-                          ref={(el) => {
-                            actionBoxRefs.current.set(msg.id, el);
-                          }}
-                          className="absolute bottom-full mb-2 right-0 bg-white border rounded shadow px-3 py-1 text-sm text-gray-800 whitespace-nowrap z-50 action-box"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <button
-                            onClick={() => handleHide(msg.id)}
-                            className="hover:underline mr-2"
-                          >
-                            削除
-                          </button>
-                          <button
-                            onClick={() => handleRevoke(msg.id)}
-                            className="hover:underline"
-                          >
-                            送信取消
-                          </button>
-                           <div className="mt-2 flex space-x-1">
-                            <button onClick={() => handleReaction(msg.id, "😄")}>😄</button>
-                            <button onClick={() => handleReaction(msg.id, "👍")}>👍</button>
-                            <button onClick={() => handleReaction(msg.id, "❤️")}>❤️</button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* 消息气泡 */}
-                    <div
-                      className={`ml-2 mr-2 p-2 rounded-lg max-w-xs ${
-                        isSender ? "bg-blue-500" : "bg-green-700"
-                      } text-white`}
-                    >
-                      <div className="text-xs font-semibold mb-1">{msg.sender}</div>
-                      {msg.content && <div>{msg.content}</div>}
-
-                      {/* Reaction 表示區塊 */}
-                      <div className="mt-1 flex space-x-2">
-                        {(messageReactions[msg.id] || []).map(r => (
-                          <div
-                            key={r.emoji}
-                            className="text-sm bg-white text-gray-700 rounded-full px-2 py-1 border"
-                            title={r.users.join(", ")} // tooltip 顯示使用者
-                          >
-                            {r.emoji} {r.users.length}
-                          </div>
-                        ))}
-                      </div>
-
-                      {msg.attachment && msg.attachment.match(/\.(jpg|jpeg|png|gif)$/i) ? (
-                        <img
-                          src={`http://localhost:8081${
-                            msg.attachment.startsWith("/uploads/")
-                              ? msg.attachment
-                              : `/uploads/${msg.attachment}`
-                          }`}
-                          alt="attachment"
-                          className="mt-2 rounded shadow max-w-full h-auto"
-                        />
-                      ) : msg.attachment ? (
-                        <a
-                          href={`http://localhost:8081${
-                            msg.attachment.startsWith("/uploads/")
-                              ? msg.attachment
-                              : `/uploads/${msg.attachment}`
-                          }`}
-                          target="_blank"
-                          className="text-blue-200 underline text-sm block mt-2"
-                        >
-                          📎 添付ファイルを開く
-                        </a>
-                      ) : null}
-
-                      <div className="text-[10px] mt-1 text-right">
-                        {readers.length === 0
-                          ? "未読"
-                          : `既読 ${readers.length}人: ${readers.join(", ")}`}
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                  msg={msg}
+                  isSender={isSender}
+                  readers={readers}
+                  reactions={messageReactions[msg.id] || []}
+                  actionBoxVisible={actionBoxVisible}
+                  currentUser={currentUser!}
+                  actionBoxRefs={actionBoxRefs}
+                  setActionBoxVisible={setActionBoxVisible}
+                  setReplyTo={setReplyTo}
+                  handleHide={handleHide}
+                  handleRevoke={handleRevoke}
+                  handleReaction={handleReaction}
+                  quotedMessage={
+                    root ? { sender: root.sender, content: root.content } : undefined
+                  }
+                />
               );
             })}
+
+
             <div ref={messagesEndRef} />
           </div>
 
@@ -687,6 +626,19 @@ export default function GroupChatRoomContent() {
 
               {/* 輸入欄與送信按鈕 */}
               <div className="flex-1 flex flex-col relative">
+                {replyTo && (
+                  <div className="mb-2 px-3 py-1 bg-gray-100 border-l-4 border-blue-400 text-sm text-gray-700 rounded">
+                    <div className="flex justify-between items-center">
+                      <span>↩ {replyTo.sender}：{replyTo.content}</span>
+                      <button
+                        className="text-xs text-gray-500 hover:text-red-500 ml-2"
+                        onClick={() => setReplyTo(null)}
+                      >
+                        × キャンセル
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <textarea
                   className="w-full border rounded px-3 py-2 text-sm resize-none max-h-36 overflow-y-auto"
                   rows={1}
@@ -709,13 +661,6 @@ export default function GroupChatRoomContent() {
                       handleSend();
                     }
                   }}
-                  // onChange={(e) => setMessage(e.target.value)}
-                  // onKeyDown={(e) => {
-                  //   if (e.key === "Enter" && !e.shiftKey) {
-                  //     e.preventDefault();
-                  //     handleSend();
-                  //   }
-                  // }}
                 />
                 {/* ✅ mention popup */}
                 {showMentionList && (

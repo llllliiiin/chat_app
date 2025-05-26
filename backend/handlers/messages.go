@@ -75,11 +75,12 @@ func (s *Server) SendMessageHandler(w http.ResponseWriter, r *http.Request) {
 		Data: map[string]any{
 			"type": "new_message",
 			"message": map[string]any{
-				"id":         messageID,
-				"room_id":    req.RoomID,
-				"sender":     senderName,
-				"content":    req.Content,
-				"created_at": now.Format(time.RFC3339),
+				"id":             messageID,
+				"room_id":        req.RoomID,
+				"sender":         senderName,
+				"content":        req.Content,
+				"created_at":     now.Format(time.RFC3339),
+				"thread_root_id": req.ThreadRootID,
 			},
 		},
 	}
