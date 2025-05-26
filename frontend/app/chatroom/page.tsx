@@ -19,6 +19,9 @@ export default function ChatRoomListPage() {
   const router = useRouter();
   // WebSocket接続保持用
   const wsRef = useRef<WebSocket | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<number | null>(null);
+ const [mentionMap, setMentionMap] = useState<Record<string, string>>({});
+  const mentionMapRef = useRef(mentionMap); // 🔁 绑定 ref
 
   // デモ用：一対一ルームの初期データ
   const oneToOneRooms = [{ label: "ルーム1", id: 1 }];
@@ -51,6 +54,19 @@ export default function ChatRoomListPage() {
     setUnreadCounts(counts);
   };
 
+  const fetchMentionNotifications = async () => {
+    try {
+      const res = await fetch("http://localhost:8081/mention-notifications", { credentials: "include" });
+      if (!res.ok) {
+        throw new Error("mention API failed");
+      }
+      const data = await res.json();
+      setMentionMap(data); // 例如 { "47": "bob" }
+    } catch (err) {
+      console.error("❌ mention fetch error:", err);
+    }
+  };
+  
   // ログイン中のユーザーを確認（未ログインならリダイレクト）
   useEffect(() => {
     fetch("http://localhost:8081/me", { credentials: "include" })
@@ -65,6 +81,9 @@ export default function ChatRoomListPage() {
         if (data?.username) {
           console.log("✅ ログイン中ユーザー:", data.username);
         }
+        if (data?.user_id) {
+          setCurrentUserId(data.user_id);
+        }
       })
       .catch(() => {
         router.push("/login");
@@ -74,7 +93,12 @@ export default function ChatRoomListPage() {
   // 定期的にルーム・未読数を更新
   useEffect(() => {
     fetchRoomsAndUnreadCounts();
-    const interval = setInterval(fetchRoomsAndUnreadCounts, 5000);
+    fetchMentionNotifications();
+
+    const interval = setInterval(() => {
+      fetchRoomsAndUnreadCounts();
+      fetchMentionNotifications(); // 每 5 秒刷新一次 mention 状态
+    }, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -102,6 +126,7 @@ export default function ChatRoomListPage() {
     }
   };
 
+
   // WebSocket接続管理（ホームルーム ID 0）
   useEffect(() => {
     if (wsRef.current) wsRef.current.close();
@@ -113,13 +138,26 @@ export default function ChatRoomListPage() {
     };
     ws.onmessage = (event) => {
       const parsed = JSON.parse(event.data);
+      // if (parsed.type === "mention_notify" && parsed.to_user === currentUserId) {
+      if (parsed.type === "mention_notify" && String(parsed.to_user) === String(currentUserId)){
+        // const roomId = parsed.room_id;
+        const roomId = String(parsed.room_id); // ✅
+
+        // const roomId = Number(parsed.room_id); // 👈 确保是数字
+        const from = parsed.from;
+        setMentionMap(prev => ({ ...prev, [roomId]: from }));
+        console.log("💡 setting mentionMap for roomId", roomId, "from", from);
+      }
       console.log("📩 WebSocket メッセージ（ホーム）:", parsed);
+      console.log("📩 mention_notify 受信:", parsed);
+      
     };
     ws.onclose = () => {
       console.log("🔌 WebSocket 切断（ホーム）");
     };
     return () => ws.close();
   }, []);
+
 
   // 新規グループルーム作成
   const handleNewGroupClick = async () => {
@@ -233,7 +271,10 @@ export default function ChatRoomListPage() {
             <ul className="space-y-3">
               {defaultGroupNames.map((name) => {
                 const room = groupRooms.find((r) => r.room_name === name);
-                const hasUnread = room && unreadCounts[room.id] > 0;
+                const roomId = room?.id;
+                const hasUnread = roomId && unreadCounts[roomId] > 0;
+                const mentionUser = roomId && mentionMap[String(roomId)];
+
                 return (
                   <li
                     key={name}
@@ -244,9 +285,17 @@ export default function ChatRoomListPage() {
                     {hasUnread && (
                       <span className="absolute right-3 top-3 w-2.5 h-2.5 bg-red-500 rounded-full shadow"></span>
                     )}
+                    {mentionUser && (
+                      <span className="block text-yellow-700 text-xs mt-1">
+                        🔔 {mentionUser} さんがあなたをメンション
+                      </span>
+                    )}
                   </li>
                 );
               })}
+
+
+
             </ul>
           </div>
         </div>
