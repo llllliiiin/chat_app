@@ -24,7 +24,8 @@ func (s *Server) GetMeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// JSON レスポンスとして返す
-	json.NewEncoder(w).Encode(map[string]string{
+	json.NewEncoder(w).Encode(map[string]interface{}{
 		"username": username,
+		"user_id":  userID,
 	})
 }

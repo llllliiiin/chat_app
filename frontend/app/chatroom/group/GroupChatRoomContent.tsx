@@ -13,6 +13,7 @@ export default function GroupChatRoomContent() {
   const [showMenu, setShowMenu] = useState(false);
   const [message, setMessage] = useState("");
   const [currentUser, setCurrentUser] = useState<string | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [members, setMembers] = useState<string[]>([]);
   const [roomTitle, setRoomTitle] = useState<string>("グループチャット");
@@ -30,6 +31,10 @@ export default function GroupChatRoomContent() {
   const [actionBoxVisible, setActionBoxVisible] = useState<number | null>(null);
   const actionBoxRefs = useRef<Map<number, HTMLDivElement | null>>(new Map());
 
+  const [mentions, setMentions] = useState<string[]>([]); // ✅ 追加
+  const [showMentionList, setShowMentionList] = useState(false); // ✅ 追加
+  const [cursorPos, setCursorPos] = useState<number>(0); // ✅ 追加
+
 
   useEffect(() => {
     // ✅ /me API 経由で現在のユーザー名を取得
@@ -45,6 +50,9 @@ export default function GroupChatRoomContent() {
         if (data?.username) {
           setCurrentUser(data.username);
           setToken("valid"); // Dummy トークンで useEffect をトリガー
+        }
+        if (data?.user_id) {
+          setCurrentUserId(data.user_id);
         }
       });
   }, [router]);
@@ -118,6 +126,13 @@ export default function GroupChatRoomContent() {
         const msg = parsed.message;
         setMessages((prev) => [...prev, { id: msg.id, sender: msg.sender, content: msg.content,attachment: msg.attachment || undefined,  }]);
       }
+        // ✅ 新增：处理提及通知
+      if (parsed.type === "mention_notify") {
+        if (parsed.to_user && parsed.to_user === currentUserId) {
+          alert(`🔔 ${parsed.from} さんにメンションされました: ${parsed.content}`);
+        }
+      }
+
       if (parsed.type === "user_entered" || parsed.type === "user_left") {
         const username = parsed.user;
         if (username !== currentUser) {
@@ -173,14 +188,24 @@ export default function GroupChatRoomContent() {
   const handleSend = async () => {
     const parsedRoomId = parseInt(roomId as string);
     if (!message.trim() || !token || isNaN(parsedRoomId)) return;
+   ////////
+    const mentionRegex = /@(\w+)/g;
+    const foundMentions = [...message.matchAll(mentionRegex)].map(m => m[1]);4
+    //////
 
     await fetch("http://localhost:8081/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ room_id: parsedRoomId, content: message, thread_root_id: null }),
+       body: JSON.stringify({
+        room_id: parsedRoomId,
+        content: message,
+        thread_root_id: null,
+        mentions: foundMentions,
+      }),
     });
     setMessage("");
+    setMentions([]);
   };
 ///////////////////////
   useEffect(() => {
@@ -514,24 +539,67 @@ export default function GroupChatRoomContent() {
               </div>
 
               {/* 輸入欄與送信按鈕 */}
-              <div className="flex-1 flex flex-col">
+              <div className="flex-1 flex flex-col relative">
                 <textarea
                   className="w-full border rounded px-3 py-2 text-sm resize-none max-h-36 overflow-y-auto"
                   rows={1}
                   placeholder="メッセージを入力...（Enterで送信 / Shift+Enterで改行）"
                   value={message}
-                  onChange={(e) => setMessage(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setMessage(val);
+                    const lastChar = val.slice(e.target.selectionStart - 1, e.target.selectionStart);
+                    setCursorPos(e.target.selectionStart);
+                    if (lastChar === "@") {
+                      setShowMentionList(true);
+                    } else {
+                      setShowMentionList(false);
+                    }
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
                       handleSend();
                     }
                   }}
+                  // onChange={(e) => setMessage(e.target.value)}
+                  // onKeyDown={(e) => {
+                  //   if (e.key === "Enter" && !e.shiftKey) {
+                  //     e.preventDefault();
+                  //     handleSend();
+                  //   }
+                  // }}
                 />
-              </div>
+                {/* ✅ mention popup */}
+                {showMentionList && (
+                  <div
+                    className="absolute z-50 bg-white border rounded shadow max-h-40 overflow-y-auto text-sm"
+                    style={{
+                      bottom: "3rem",
+                      left: "0.5rem",
+                    }}
+                  >
+                    {members
+                      .filter(name => name !== currentUser)
+                      .map((name) => (
+                        <div
+                          key={name}
+                          className="px-3 py-1 hover:bg-gray-200 cursor-pointer"
+                          onClick={() => {
+                            const before = message.slice(0, cursorPos);
+                            const after = message.slice(cursorPos);
+                            const newText = before + name + " " + after;
+                            setMessage(newText);
+                            setShowMentionList(false);
+                          }}
+                        >
+                          @{name}
+                        </div>
+                      ))}
+                  </div>
+                )}
 
-            
-
+              </div>     
 
               {/* 送信按鈕 */}
               <div className="ml-3">

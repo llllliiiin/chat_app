@@ -11,9 +11,10 @@ import (
 )
 
 type CreateMessageRequest struct {
-	RoomID       int    `json:"room_id"`
-	Content      string `json:"content"`
-	ThreadRootID *int   `json:"thread_root_id"`
+	RoomID       int      `json:"room_id"`
+	Content      string   `json:"content"`
+	ThreadRootID *int     `json:"thread_root_id"`
+	Mentions     []string `json:"mentions"`
 }
 
 // POST /messages メッセージ送信エンドポイント
@@ -53,6 +54,11 @@ func (s *Server) SendMessageHandler(w http.ResponseWriter, r *http.Request) {
 		log.Println("❌ データベース書き込み失敗:", err)                        // 資料庫寫入失敗
 		http.Error(w, "データベースエラー", http.StatusInternalServerError) // 数据库错误
 		return
+	}
+
+	// ✅ メンション保存
+	if len(req.Mentions) > 0 {
+		s.SaveMentionsAndNotify(messageID, req.Mentions)
 	}
 
 	// ✅ 送信者のユーザー名を取得
