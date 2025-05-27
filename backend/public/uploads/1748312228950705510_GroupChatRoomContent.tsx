@@ -39,7 +39,7 @@ export default function GroupChatRoomContent() {
   const [mentions, setMentions] = useState<string[]>([]); // ✅ 追加
   const [showMentionList, setShowMentionList] = useState(false); // ✅ 追加
   const [cursorPos, setCursorPos] = useState<number>(0); // ✅ 追加
-  const [replyTo, setReplyTo] = useState<{id: number; content: string; sender: string; thread_root_id?: number; attachment?: string;} | null>(null);
+  const [replyTo, setReplyTo] = useState<{ id: number; content: string; sender: string } | null>(null);
 
 
   useEffect(() => {
@@ -589,7 +589,7 @@ export default function GroupChatRoomContent() {
                   handleRevoke={handleRevoke}
                   handleReaction={handleReaction}
                   quotedMessage={
-                    root ? { sender: root.sender, content: root.content,attachment: root.attachment,} : undefined
+                    root ? { sender: root.sender, content: root.content } : undefined
                   }
                 />
               );
@@ -648,14 +648,7 @@ export default function GroupChatRoomContent() {
                 {replyTo && (
                   <div className="mb-2 px-3 py-1 bg-gray-100 border-l-4 border-[#2e8b57] text-sm text-gray-700 rounded">
                     <div className="flex justify-between items-center">
-                      <span>
-                        ↩ {replyTo.sender}：
-                        {replyTo.attachment ? (
-                          replyTo.attachment.match(/\.(jpg|jpeg|png|gif)$/i)
-                            ? "｜画像"
-                            : "｜ファイル"
-                        ) : replyTo.content}
-                      </span>
+                      <span>↩ {replyTo.sender}：{replyTo.content}</span>
                       <button
                         className="text-xs text-gray-500 hover:text-red-500 ml-2"
                         onClick={() => setReplyTo(null)}

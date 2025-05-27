@@ -38,9 +38,6 @@ export default function MessageItem({
   quotedMessage,
 }: Props) {
   // console.log("🧩 引用传入状态:", quotedMessage);
-const otherReaders = readers.filter((name) => name !== currentUser);
-const onlySelfRead = readers.length === 1 && readers[0] === currentUser;
-
   return (
     <div className={`flex items-end ${isSender ? "justify-end" : "justify-start"}`}>
       <div className={`flex items-end ${isSender ? "flex-row" : "flex-row-reverse"} group relative`}>
@@ -69,7 +66,7 @@ const onlySelfRead = readers.length === 1 && readers[0] === currentUser;
               )}
               <button
                 onClick={() => {
-                  setReplyTo({ id: msg.id, content: msg.content, sender: msg.sender ,thread_root_id: msg.thread_root_id ?? undefined, attachment: msg.attachment,});
+                  setReplyTo({ id: msg.id, content: msg.content, sender: msg.sender });
                   setActionBoxVisible(null);
                 }}
                 className="mt-2 text-[#2e8b57] hover:text-[#1a5e3b] transition"
@@ -89,7 +86,7 @@ const onlySelfRead = readers.length === 1 && readers[0] === currentUser;
           <div className="text-xs font-semibold mb-1">{msg.sender}</div>
           {quotedMessage && (
             <div className="mb-2 px-2 py-1 bg-white/30 rounded text-xs text-white border border-white/40">
-              <span className="font-bold">@{quotedMessage.sender}</span>：
+              <span className="font-bold"></span>
               {quotedMessage.attachment ? (
                 quotedMessage.attachment.match(/\.(jpg|jpeg|png|gif)$/i)
                   ? "｜画像"
@@ -131,9 +128,10 @@ const onlySelfRead = readers.length === 1 && readers[0] === currentUser;
           ) : null}
 
           <div className="text-[10px] mt-1 text-right">
-            {readers.length === 0 || onlySelfRead
+            {readers.length === 0
               ? "未読"
-              : `既読 ${otherReaders.length}人: ${otherReaders.join(", ")}`}
+              : `既読`}
+              {/* : `既読 ${readers.length}人: ${readers.join(", ")}`} */}
           </div>
         </div>
       </div>

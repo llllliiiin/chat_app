@@ -3,6 +3,7 @@
 import EmojiPicker from 'emoji-picker-react';
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
+import MessageItem from "./components/MessageItem";
 
 interface RoomInfo {
   id: number;
@@ -17,7 +18,7 @@ export default function UserPage() {
 
   const [users, setUsers] = useState<string[]>([]);
   const [message, setMessage] = useState(""); // 入力中の内容
-  const [messages, setMessages] = useState<{ id: number; content: string; sender: string; readers?: string[]; attachment?: string }[]>([]);
+  const [messages, setMessages] = useState<{ id: number; content: string; sender: string; readers?: string[];thread_root_id?: number | null; attachment?: string }[]>([]);
 
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -36,13 +37,14 @@ export default function UserPage() {
 
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
   const [actionBoxVisible, setActionBoxVisible] = useState<number | null>(null);
   const actionBoxRefs = useRef<Map<number, HTMLDivElement | null>>(new Map());
   const [messageReactions, setMessageReactions] = useState<Record<number, { emoji: string; users: string[] }[]>>({});
-
-
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+   
+  const [replyTo, setReplyTo] = useState<{id: number; content: string; sender: string; thread_root_id?: number; attachment?: string;} | null>(null);
+  
   // 初期化：ログインチェック & ユーザー一覧の取得
   useEffect(() => {
     fetch("http://localhost:8081/me", { credentials: "include" })
@@ -152,47 +154,89 @@ export default function UserPage() {
         if (content.startsWith("reaction:")) {
           const [, emoji, targetIdStr] = content.split(":");
           const targetId = parseInt(targetIdStr);
+          const sender = msg.sender;
 
           setMessageReactions((prev) => {
             const oldList = prev[targetId] || [];
-            const existing = oldList.find((r) => r.emoji === emoji);
-            let updated;
 
-            if (existing) {
-              const hasReacted = existing.users.includes(msg.sender);
-              updated = hasReacted
-                ? oldList
-                    .map((r) =>
-                      r.emoji === emoji
-                        ? { ...r, users: r.users.filter((u) => u !== msg.sender) }
-                        : r
-                    )
-                    .filter((r) => r.users.length > 0)
-                : oldList.map((r) =>
-                    r.emoji === emoji
-                      ? {
-                          ...r,
-                          users: [...r.users, msg.sender].filter((v, i, a) => a.indexOf(v) === i),
-                        }
-                      : r
-                  );
+            // 移除該用戶所有 reaction（不論是什麼 emoji）
+            const cleaned = oldList.map((r) => ({
+              ...r,
+              users: r.users.filter((u) => u !== sender),
+            })).filter((r) => r.users.length > 0);
+
+            // 查這次點的 emoji，之前是否有存在（點同一個表示取消）
+            const hadSameEmojiBefore = oldList.some((r) => r.emoji === emoji && r.users.includes(sender));
+
+            if (hadSameEmojiBefore) {
+              // 同 emoji 且點了 → 視為取消，不加回去
+              return { ...prev, [targetId]: cleaned };
             } else {
-              updated = [...oldList, { emoji, users: [msg.sender] }];
+              // 是新的 emoji reaction → 加上
+              const updatedEmoji = cleaned.find((r) => r.emoji === emoji);
+              if (updatedEmoji) {
+                updatedEmoji.users.push(sender);
+              } else {
+                cleaned.push({ emoji, users: [sender] });
+              }
+              return { ...prev, [targetId]: cleaned };
             }
-
-            return { ...prev, [targetId]: updated };
           });
 
-          return; // ✅ 不加入普通 message 列表
+          return; // ✅ 阻止該 reaction 進入普通訊息流
         }
 
+
         // 普通訊息照常處理
-        setMessages((prev) => [...prev, {
-          id: msg.id,
-          sender: msg.sender,
-          content: msg.content,
-          attachment: msg.attachment || undefined,
-        }]);
+        setMessages((prev) => {
+          const newMessages = [...prev];
+
+          // 如果这条消息是子消息（thread），就检查 parent 是否已存在
+          if (msg.thread_root_id) {
+            const hasParent = prev.some((m) => m.id === msg.thread_root_id);
+
+            // 如果没有 parent，而且服务器有发 parent_message，就补上
+            if (!hasParent && parsed.parent_message) {
+              newMessages.push({
+                id: parsed.parent_message.id,
+                sender: parsed.parent_message.sender,
+                content: parsed.parent_message.content,
+                thread_root_id: parsed.parent_message.thread_root_id,
+                attachment: parsed.parent_message.attachment || undefined,
+              });
+            }
+
+            if (!hasParent && !parsed.parent_message) {
+              fetch(`http://localhost:8081/messages/${msg.thread_root_id}`, {
+                credentials: "include",
+              })
+                .then((res) => res.json())
+                .then((parentMsg) => {
+                  setMessages((prev) => [
+                    ...prev,
+                    {
+                      id: parentMsg.id,
+                      sender: parentMsg.sender,
+                      content: parentMsg.content,
+                      thread_root_id: parentMsg.thread_root_id,
+                      attachment: parentMsg.attachment || undefined,
+                    },
+                  ]);
+                });
+            }
+          }
+
+          // 最后加入当前消息本身
+          newMessages.push({
+            id: msg.id,
+            sender: msg.sender,
+            content: msg.content,
+            thread_root_id: msg.thread_root_id,
+            attachment: msg.attachment || undefined,
+          });
+
+          return newMessages;
+        });
       }
 
     };
@@ -233,27 +277,59 @@ export default function UserPage() {
         const rawMessages = data.messages || [];
 
         const normalMessages: typeof messages = [];
-        const reactionMap: Record<number, Record<string, string[]>> = {};
+
+        const userEmojiMap: { [messageId: number]: { [user: string]: string } } = {};
+        const reactionMap: {
+          [messageId: number]: {
+            [emoji: string]: string[]; // emoji → users[]
+          };
+        } = {};
 
         for (const m of rawMessages) {
           if (m.content?.startsWith("reaction:")) {
             const [, emoji, targetIdStr] = m.content.split(":");
             const targetId = parseInt(targetIdStr);
-            if (!reactionMap[targetId]) reactionMap[targetId] = {};
-            if (!reactionMap[targetId][emoji]) reactionMap[targetId][emoji] = [];
-            if (!reactionMap[targetId][emoji].includes(m.sender)) {
+
+            // 初始化结构
+            if (!reactionMap[targetId]) {
+              reactionMap[targetId] = {};
+            }
+
+            if (!userEmojiMap[targetId]) {
+              userEmojiMap[targetId] = {};
+            }
+
+            const previousEmoji = userEmojiMap[targetId][m.sender];
+
+            // 如果点的是同一个 emoji（即重复点）→ 视为取消
+            if (previousEmoji === emoji) {
+              // 取消原来的 emoji
+              reactionMap[targetId][emoji] = reactionMap[targetId][emoji]?.filter((u) => u !== m.sender);
+              delete userEmojiMap[targetId][m.sender];
+            } else {
+              // 替换掉旧 reaction（如果存在）
+              if (previousEmoji) {
+                reactionMap[targetId][previousEmoji] = reactionMap[targetId][previousEmoji]?.filter((u) => u !== m.sender);
+              }
+
+              // 新 reaction 插入
+              if (!reactionMap[targetId][emoji]) {
+                reactionMap[targetId][emoji] = [];
+              }
               reactionMap[targetId][emoji].push(m.sender);
+              userEmojiMap[targetId][m.sender] = emoji;
             }
           } else {
             normalMessages.push({
               id: m.id,
               content: m.content,
               sender: m.sender,
+              thread_root_id: m.thread_root_id,
               attachment: m.attachment || undefined,
-              readers: [],
             });
           }
         }
+
 
         setMessages(normalMessages);
 
@@ -307,7 +383,7 @@ export default function UserPage() {
 
 
 
-    const counts: Record<string, number> = {};
+  const counts: Record<string, number> = {};
     for (const room of matchedRooms) {
       const res = await fetch(`http://localhost:8081/rooms/${room.id}/unread-count`, {
         credentials: "include",
@@ -373,7 +449,6 @@ export default function UserPage() {
 
   const handleSend = async () => {
     const parsedRoomId = parseInt(roomId as string, 10);
-
     if (!message.trim()) return;
     if (!roomId || isNaN(parsedRoomId) || parsedRoomId <= 0) {
       alert("無効なルームIDです");
@@ -388,11 +463,12 @@ export default function UserPage() {
         body: JSON.stringify({
           room_id: parsedRoomId,
           content: message,
-          thread_root_id: null,
+          thread_root_id: replyTo?.id ?? null, // ✅ 加上引用关系
         }),
       });
 
       setMessage("");
+      setReplyTo(null);
       setTimeout(() => {
         fetchReads();
       }, 300);
@@ -580,100 +656,27 @@ export default function UserPage() {
             {messages.map((msg) => {
               const readers = messageReads[msg.id] || [];
               const isSender = msg.sender === currentUser;
+              const root = messages.find(m => m.id === msg.thread_root_id);
+
               return (
-                <div key={msg.id} className={`flex ${isSender ? "justify-end" : "justify-start"}`}>
-                  <div className={`flex items-end ${isSender ? "flex-row" : "flex-row-reverse"} group relative`}>
-                    
-                    {/* 三点按钮 */}
-                    <div className="relative z-10">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setActionBoxVisible((prev) => (prev === msg.id ? null : msg.id));
-                        }}
-                        className="w-6 h-6 flex items-center justify-center rounded-full text-[#2e8b57] hover:bg-[#2e8b57]/20 text-sm transition opacity-0 group-hover:opacity-100"
-                      >
-                        ⋯
-                      </button>
-
-                      {/* 对方：左上浮出 */}
-                      {!isSender && actionBoxVisible === msg.id && (
-                        <div
-                          ref={(el) => {
-                            actionBoxRefs.current.set(msg.id, el);
-                          }}
-                          className="absolute bottom-full mb-2 left-0 bg-white border rounded shadow px-3 py-1 text-sm text-gray-800 whitespace-nowrap z-50 action-box"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <button
-                            onClick={() => handleHide(msg.id)}
-                            className="hover:underline"
-                          >
-                            削除
-                          </button>
-                          <div className="mt-2 flex gap-x-2 justify-start">
-                            <button onClick={() => handleReaction(msg.id, "😄")}>😄</button>
-                            <button onClick={() => handleReaction(msg.id, "👍")}>👍</button>
-                            <button onClick={() => handleReaction(msg.id, "❤️")}>❤️</button>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* 自己：右上浮出 */}
-                      {isSender && actionBoxVisible === msg.id && (
-                        <div
-                          ref={(el) => {
-                            actionBoxRefs.current.set(msg.id, el);
-                          }}
-                          className="absolute bottom-full mb-2 right-0 bg-white border rounded shadow px-3 py-1 text-sm text-gray-800 whitespace-nowrap z-50 action-box"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <button
-                            onClick={() => handleHide(msg.id)}
-                            className="hover:underline mr-2"
-                          >
-                            削除
-                          </button>
-                          <button
-                            onClick={() => handleRevoke(msg.id)}
-                            className="hover:underline"
-                          >
-                            送信取消
-                          </button>
-                          <div className="mt-2 flex gap-x-2 justify-start">
-                            <button onClick={() => handleReaction(msg.id, "😄")}>😄</button>
-                            <button onClick={() => handleReaction(msg.id, "👍")}>👍</button>
-                            <button onClick={() => handleReaction(msg.id, "❤️")}>❤️</button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* 消息气泡 */}
-                    <div className={`ml-2 mr-2 p-2 rounded-lg max-w-xs ${isSender ? "bg-blue-500" : "bg-green-700"} text-white`}>
-                      <div className="text-xs font-semibold mb-1">{msg.sender}</div>
-                      {msg.content && <div>{msg.content}</div>}
-
-                      <div className="mt-1 flex space-x-2">
-                        {(messageReactions[msg.id] || []).map(r => (
-                          <div
-                            key={r.emoji}
-                            className="text-sm bg-white text-gray-700 rounded-full px-2 py-1 border"
-                            title={r.users.join(", ")}
-                          >
-                            {r.emoji} {r.users.length}
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* 附件逻辑略 */}
-                      <div className="text-[10px] mt-1 text-right">
-                        {readers.length === 0 ? "未読" : `既読 ${readers.length}人: ${readers.join(", ")}`}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
+                <MessageItem
+                  key={msg.id}
+                  msg={msg}
+                  isSender={isSender}
+                  readers={readers}
+                  reactions={messageReactions[msg.id] || []}
+                  actionBoxVisible={actionBoxVisible}
+                  currentUser={currentUser!}
+                  actionBoxRefs={actionBoxRefs}
+                  setActionBoxVisible={setActionBoxVisible}
+                  setReplyTo={setReplyTo}
+                  handleHide={handleHide}
+                  handleRevoke={handleRevoke}
+                  handleReaction={handleReaction}
+                  quotedMessage={
+                    root ? { sender: root.sender, content: root.content,attachment: root.attachment,} : undefined
+                  }
+                />
               );
             })}
             <div ref={messagesEndRef} />
@@ -725,13 +728,36 @@ export default function UserPage() {
               </div>
 
               {/* 輸入欄與送信按鈕 */}
-              <div className="flex-1 flex flex-col">
+              <div className="flex-1 flex flex-col relative">
+                {replyTo && (
+                  <div className="mb-2 px-3 py-1 bg-gray-100 border-l-4 border-[#2e8b57] text-sm text-gray-700 rounded">
+                    <div className="flex justify-between items-center">
+                      <span>
+                        ↩ {replyTo.sender}：
+                        {replyTo.attachment ? (
+                          replyTo.attachment.match(/\.(jpg|jpeg|png|gif)$/i)
+                            ? "｜画像"
+                            : "｜ファイル"
+                        ) : replyTo.content}
+                      </span>
+                      <button
+                        className="text-xs text-gray-500 hover:text-red-500 ml-2"
+                        onClick={() => setReplyTo(null)}
+                      >
+                        × キャンセル
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <textarea
                   className="w-full border rounded px-3 py-2 text-sm resize-none max-h-36 overflow-y-auto"
                   rows={1}
                   placeholder="メッセージを入力...（Enterで送信 / Shift+Enterで改行）"
                   value={message}
-                  onChange={(e) => setMessage(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setMessage(val);
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();

@@ -20,7 +20,7 @@ export default function ChatRoomListPage() {
   // WebSocket接続保持用
   const wsRef = useRef<WebSocket | null>(null);
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
-  const [mentionMap, setMentionMap] = useState<Record<string, string>>({});
+ const [mentionMap, setMentionMap] = useState<Record<string, string>>({});
   const mentionMapRef = useRef(mentionMap); // 🔁 绑定 ref
 
   // デモ用：一対一ルームの初期データ
@@ -58,9 +58,7 @@ export default function ChatRoomListPage() {
     try {
       const res = await fetch("http://localhost:8081/mention-notifications", { credentials: "include" });
       if (!res.ok) {
-        // throw new Error("mention API failed");
-        router.push("/login");
-        return; 
+        throw new Error("mention API failed");
       }
       const data = await res.json();
       setMentionMap(data); // 例如 { "47": "bob" }
