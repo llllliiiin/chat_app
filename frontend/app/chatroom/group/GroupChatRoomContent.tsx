@@ -699,9 +699,9 @@ export default function GroupChatRoomContent() {
                   >
                     {members
                       .filter(name => name !== currentUser)
-                      .map((name) => (
+                      .map((name, index) => (
                         <div
-                          key={name}
+                          key={`${name}-${index}`}
                           className="px-3 py-1 hover:bg-gray-200 cursor-pointer"
                           onClick={() => {
                             const before = message.slice(0, cursorPos);

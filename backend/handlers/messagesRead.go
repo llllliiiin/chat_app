@@ -65,13 +65,26 @@ func (s *Server) MarkMessageAsReadHandler(w http.ResponseWriter, r *http.Request
 		readers = append(readers, name)
 	}
 
-	// 既読ステータスをブロードキャスト
+	// 既読ステータスをブロードキャスト（聊天室内）
+	unreadMap := s.GetUnreadMapForRoom(roomID)
+
 	s.WSHub.Broadcast <- WSMessage{
 		RoomID: roomID,
 		Data: map[string]any{
 			"type":       "read_update",
 			"message_id": messageID,
 			"readers":    readers,
+			"unread_map": unreadMap,
+		},
+	}
+
+	// ✅ 同步推送到 room_id = 0（聊天室首页）
+	s.WSHub.Broadcast <- WSMessage{
+		RoomID: 0,
+		Data: map[string]any{
+			"type":       "unread_update",
+			"room_id":    roomID,
+			"unread_map": unreadMap,
 		},
 	}
 
@@ -153,4 +166,33 @@ func (s *Server) GetMessageReadsHandler(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"readers": readers,
 	})
+}
+
+func (s *Server) GetUnreadMapForRoom(roomID int) map[int]int {
+	result := make(map[int]int)
+
+	rows, err := s.DB.Query(`
+		SELECT rm.user_id, COUNT(m.id)
+		FROM room_members rm
+		JOIN messages m ON m.room_id = rm.room_id
+		WHERE rm.room_id = $1
+		  AND m.sender_id != rm.user_id
+		  AND NOT EXISTS (
+		    SELECT 1 FROM message_reads r
+		    WHERE r.message_id = m.id AND r.user_id = rm.user_id
+		  )
+		GROUP BY rm.user_id
+	`, roomID)
+	if err != nil {
+		return result
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var userID, count int
+		rows.Scan(&userID, &count)
+		result[userID] = count
+	}
+
+	return result
 }

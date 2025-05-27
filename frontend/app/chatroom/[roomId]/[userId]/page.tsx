@@ -24,6 +24,7 @@ export default function UserPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [currentUser, setCurrentUser] = useState<string | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesInputRef = useRef<HTMLInputElement>(null);
 
@@ -58,6 +59,7 @@ export default function UserPage() {
       .then((data) => {
         if (data?.username) {
           setCurrentUser(data.username);
+          setCurrentUserId(data.user_id);
           fetch("http://localhost:8081/users", { credentials: "include" })
             .then(async (res) => {
               if (!res.ok) throw new Error(await res.text());
@@ -238,13 +240,61 @@ export default function UserPage() {
           return newMessages;
         });
       }
-
     };
 
     return () => {
       ws.close();
     };
   }, [roomId, currentUser]);
+
+  useEffect(() => {
+    if (currentUserId === null) return;
+
+    const ws = new WebSocket("ws://localhost:8081/ws?room_id=0");
+
+    ws.onopen = () => {
+      console.log("✅ WebSocket 接続成功 (左側)");
+      ws.send(JSON.stringify({ ping: true }));
+    };
+
+    ws.onmessage = (event) => {
+      const parsed = JSON.parse(event.data);
+      console.log("📩 WebSocket 收到:", parsed);
+
+      if (
+        parsed.type === "unread_update" &&
+        parsed.unread_map &&
+        parsed.room_id !== undefined &&
+        currentUserId !== null
+      ) {
+        const count = parsed.unread_map[currentUserId];
+        console.log("🧩 当前用户 ID:", currentUserId);
+        console.log("📦 unread_map:", parsed.unread_map);
+        console.log("🔍 对应 unread:", count);
+
+        if (typeof count === "number") {
+          console.log("✅ 更新 unreadCounts:", parsed.room_id, "=>", count);
+          setUnreadCounts((prev) => ({
+            ...prev,
+            [parsed.room_id]: count,
+          }));
+        } else {
+          console.warn("⚠️ 当前用户未出现在 unread_map 中");
+        }
+      }
+    };
+
+    ws.onerror = (err) => {
+      console.error("❌ WebSocket エラー：", err);
+    };
+
+    ws.onclose = () => {
+      console.warn("🔌 WebSocket 断开 (左側)");
+    };
+
+    return () => ws.close();
+  }, [currentUserId]);
+
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
