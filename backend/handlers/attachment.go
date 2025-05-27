@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"time"
+
+	"github.com/gorilla/mux"
 )
 
 // POST /messages/upload
@@ -97,4 +99,26 @@ func (s *Server) UploadMessageAttachmentHandler(w http.ResponseWriter, r *http.R
 		"message":   "アップロード成功", // 上傳成功
 		"file_path": "/uploads/" + fileName,
 	})
+}
+
+// GET /downloads/{filename}
+func (s *Server) DownloadAttachmentHandler(w http.ResponseWriter, r *http.Request) {
+	filename := mux.Vars(r)["filename"]
+	if filename == "" {
+		http.Error(w, "ファイル名が無効です", http.StatusBadRequest)
+		return
+	}
+
+	filePath := filepath.Join("public", "uploads", filename)
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer file.Close()
+
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+	w.Header().Set("Content-Type", "application/octet-stream")
+	io.Copy(w, file)
 }

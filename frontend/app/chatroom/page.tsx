@@ -318,7 +318,10 @@ export default function ChatRoomListPage() {
                   >
                     {name}
                     {hasUnread && (
-                      <span className="absolute right-3 top-3 w-2.5 h-2.5 bg-red-500 rounded-full shadow"></span>
+                      // <span className="absolute right-3 top-3 w-2.5 h-2.5 bg-red-500 rounded-full shadow"></span>
+                      <span className="absolute top-1 right-2 bg-red-500 text-white text-[13px] font-bold px-2 h-[20px] leading-[20px] rounded-[10px] shadow-sm min-w-[26px] text-center">
+                        {unreadCounts[roomId] > 99 ? "99+" : unreadCounts[roomId]}
+                      </span>
                     )}
                     {mentionUser && (
                       <span className="block text-yellow-700 text-xs mt-1">

@@ -581,7 +581,7 @@ export default function GroupChatRoomContent() {
           <h3 className="text-md font-semibold mb-4 text-center">メンバー</h3>
           <ul className="space-y-3">
             {members.map((name, idx) => (
-              <li key={idx} className="bg-white text-[#2e8b57] rounded px-3 py-2 text-sm text-center">
+              <li key={idx} className="bg-white text-[#2e8b57] rounded px-3 py-2 text-m text-center">
                 {name}
               </li>
             ))}
