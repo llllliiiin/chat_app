@@ -310,13 +310,13 @@ export default function ChatRoomWithUserPage() {
                     <li
                       key={user}
                       onClick={() => handleUserClick(user)}
-                      className="relative flex items-center justify-center rounded bg-white p-3 text-sm font-medium shadow transition hover:bg-gray-100"
+                      className="bg-white text-[#2e8b57] rounded px-3 py-2 text-m text-center"
                     >
                       {user}
-                      {showRedDot ? (
-                        <span className="absolute right-1 top-1 w-2.5 h-2.5 rounded-full bg-red-500 shadow" />
-                      ) : (
-                        <span className="absolute right-1 top-1 text-[8px] text-gray-300">{unread ?? "-"}</span> // 可选调试辅助显示
+                      {showRedDot && (
+                        <span className="absolute top-1 right-1 bg-red-500 text-white text-[11px] font-bold px-2 h-[20px] leading-[20px] rounded-[10px] shadow-sm min-w-[24px] text-center">
+                          {unread > 99 ? "99+" : unread}
+                        </span>
                       )}
                     </li>
                   );

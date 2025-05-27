@@ -115,18 +115,28 @@ const onlySelfRead = readers.length === 1 && readers[0] === currentUser;
           </div>
 
           {msg.attachment && msg.attachment.match(/\.(jpg|jpeg|png|gif)$/i) ? (
-            <img
-              src={`http://localhost:8081${msg.attachment.startsWith("/uploads/") ? msg.attachment : `/uploads/${msg.attachment}`}`}
-              alt="attachment"
-              className="mt-2 rounded shadow max-w-full h-auto"
-            />
+            <div className="relative inline-block mt-2 group">
+              <img
+                src={`http://localhost:8081${msg.attachment.startsWith("/uploads/") ? msg.attachment : `/uploads/${msg.attachment}`}`}
+                alt="attachment"
+                className="rounded shadow max-w-full h-auto"
+              />
+              <a
+                href={`http://localhost:8081/downloads/${msg.attachment.replace("/uploads/", "")}`}
+                className="absolute top-1 right-1 bg-black/60 hover:bg-black/80 text-white text-xs px-2 py-1 rounded-full opacity-0 group-hover:opacity-100 transition"
+                title="画像を保存"
+              >
+                ⬇
+              </a>
+            </div>
           ) : msg.attachment ? (
             <a
               href={`http://localhost:8081${msg.attachment.startsWith("/uploads/") ? msg.attachment : `/uploads/${msg.attachment}`}`}
-              target="_blank"
+              download
+              target="_self"
               className="text-blue-200 underline text-sm block mt-2"
             >
-              📎 添付ファイルを開く
+              📎 添付ファイルを保存
             </a>
           ) : null}
 

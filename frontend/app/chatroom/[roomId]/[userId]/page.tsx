@@ -684,11 +684,13 @@ export default function UserPage() {
                   //瀏覽器會自動將 /chatroom/ルーム1/さとう 編碼為 /chatroom/%E3%83%AB%E3%83%BC%E3%83%A01/%E3%81%95%E3%81%A8%E3%81%86；
                   //而 useParams() 拿到的是「原始 URL 字串」，所以需要手動 decode 才能在畫面中還原。
                   onClick={() => handleUserClick(user)}
-                  className="relative p-2 bg-white rounded shadow hover:bg-gray-200 flex justify-center items-center mx-auto cursor-pointer"
+                  className="bg-white text-[#2e8b57] rounded px-3 py-2 text-m text-center"
                 >
                   {user}
                   {userToRoomIdMap[user] !== undefined && unreadCounts[userToRoomIdMap[user]] > 0 && (
-                    <span className="absolute right-1 top-1 w-2.5 h-2.5 bg-red-500 rounded-full shadow"></span>
+                    <span className="absolute top-1 right-1 bg-red-500 text-white text-[11px] font-bold px-2 h-[20px] leading-[20px] rounded-[10px] shadow-sm min-w-[24px] text-center">
+                      {unreadCounts[userToRoomIdMap[user]] > 99 ? "99+" : unreadCounts[userToRoomIdMap[user]]}
+                    </span>
                   )}
                 </li>
               ))}
@@ -699,7 +701,7 @@ export default function UserPage() {
         {/* 聊天視窗 */}
         <div className="w-3/4 flex flex-col min-h-0">
           <div className="bg-white p-4 border-b">
-            <h2 className="text-lg font-semibold">{decodeURIComponent(userId as string)}</h2>
+            <h2 className="text-lg font-semibold text-[#2e8b57]">{decodeURIComponent(userId as string)}</h2>
           </div>
 
           <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 bg-gray-50 scrollbar-hide">
