@@ -406,6 +406,10 @@ export default function GroupChatRoomContent() {
 
   const handleLeaveGroup = async () => {
     if (!roomId || !token) return;
+
+    // ✅ 先关闭 WebSocket
+    wsRef.current?.close();
+
     const res = await fetch(`http://localhost:8081/rooms/${roomId}/leave`, {
       method: "POST",
       credentials: "include",
@@ -502,6 +506,11 @@ export default function GroupChatRoomContent() {
 
   return (
     <div className="h-screen flex flex-col overflow-hidden" onClick={() => setActionBoxVisible(null)}>
+      {systemMessage && (
+        <div className="absolute top-20 left-1/2 transform -translate-x-1/2 z-50 px-4 py-2 bg-gray-700 text-white text-sm rounded shadow-lg">
+          {systemMessage}
+        </div>
+      )}
       <div className="relative bg-white p-4 border-b shadow-sm h-20 flex items-center justify-center" style={{ backgroundColor: "#f5fffa" }}>
         {/* ← 戻るボタン（チャットルーム一覧へ） */}
         <button
@@ -523,32 +532,46 @@ export default function GroupChatRoomContent() {
 
         <h2 className="text-lg text-[#2e8b57] font-semibold">{roomTitle} (ID: {roomId})</h2>
 
-        <div className="absolute right-4 top-1/2 transform -translate-y-1/2">
+        {/* 原来 .absolute right-4 ... 不动，只放头像 */}
+        <div className="absolute right-4 top-1/2 transform -translate-y-1/2 z-10">
           <img
             src="/window.svg"
             alt="My Avatar"
             className="w-8 h-8 rounded-full cursor-pointer"
             onClick={() => setShowMenu((prev) => !prev)}
           />
-          {showMenu && (
-            <div className="absolute right-0 mt-2 w-40 bg-white border border-gray-200 rounded shadow-lg z-10">
-              <button onClick={() => router.push("/")} className="block w-full text-left px-4 py-2 hover:bg-gray-100 text-sm">ホームページ</button>
-              <button onClick={handleLeaveGroup} className="block w-full text-left px-4 py-2 hover:bg-gray-100 text-sm text-red-500">退室します</button>
-              <button
-                onClick={async () => {
-                  await fetch("http://localhost:8081/logout", {
-                    method: "POST",
-                    credentials: "include",
-                  });
-                  router.push("/login");
-                }}
-                className="block w-full text-left px-4 py-2 hover:bg-gray-100 text-sm text-red-500"
-              >
-                ログアウト
-              </button>
-            </div>
-          )}
         </div>
+
+        {/* 退出菜单直接插入在 return 根节点附近（但不要嵌套在 scroll 容器中） */}
+        {showMenu && (
+          <div className="fixed top-16 right-4 w-40 bg-white border border-gray-200 rounded shadow-lg z-[9999]">
+            <button
+              onClick={() => router.push("/")}
+              className="block w-full text-left px-4 py-2 hover:bg-gray-100 text-sm"
+            >
+              ホームページ
+            </button>
+            <button
+              onClick={handleLeaveGroup}
+              className="block w-full text-left px-4 py-2 hover:bg-gray-100 text-sm text-red-500"
+            >
+              退室します
+            </button>
+            <button
+              onClick={async () => {
+                await fetch("http://localhost:8081/logout", {
+                  method: "POST",
+                  credentials: "include",
+                });
+                router.push("/login");
+              }}
+              className="block w-full text-left px-4 py-2 hover:bg-gray-100 text-sm text-red-500"
+            >
+              ログアウト
+            </button>
+          </div>
+        )}
+
       </div>
 
 

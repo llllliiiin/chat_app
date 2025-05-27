@@ -217,7 +217,7 @@ export default function ChatRoomWithUserPage() {
       return;
     }
     fetchRoomUserMapping();
-    fetchRoomsAndUnreadCounts(); // ✅ 加这句
+    fetchRoomsAndUnreadCounts(); 
     // fetchRoomsAndUnreadCounts();
     // const interval = setInterval(() => {
     //   if (currentUser) {
@@ -275,7 +275,7 @@ export default function ChatRoomWithUserPage() {
               onClick={() => router.push("/login")}
               className="block w-full text-left px-4 py-2 hover:bg-gray-100 text-sm text-red-500"
             >
-              ログイン画面へ
+              ログアウト
             </button>
           </div>
         )}
