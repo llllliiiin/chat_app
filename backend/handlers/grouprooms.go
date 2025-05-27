@@ -122,14 +122,48 @@ func (s *Server) JoinGroupRoomHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var exists int
-	/// 実際のデータではなく、存在チェックをするだけ
-	s.DB.QueryRow("SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2", roomID, userID).Scan(&exists)
-	if exists != 1 {
+	// var exists int
+	// /// 実際のデータではなく、存在チェックをするだけ
+	// s.DB.QueryRow("SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2", roomID, userID).Scan(&exists)
+	// if exists != 1 {
+	// 	_, err := s.DB.Exec("INSERT INTO room_members (room_id, user_id) VALUES ($1, $2)", roomID, userID)
+	// 	if err != nil {
+	// 		http.Error(w, "参加に失敗しました", http.StatusInternalServerError)
+	// 		return
+	// 	}
+	// }
+	var exists bool
+	err = s.DB.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2
+		)
+	`, roomID, userID).Scan(&exists)
+
+	if err != nil {
+		http.Error(w, "存在チェック失敗", http.StatusInternalServerError)
+		return
+	}
+
+	if !exists {
 		_, err := s.DB.Exec("INSERT INTO room_members (room_id, user_id) VALUES ($1, $2)", roomID, userID)
 		if err != nil {
 			http.Error(w, "参加に失敗しました", http.StatusInternalServerError)
 			return
+		}
+		// 👇 新しく入った場合にだけ入室通知を送る
+		var username string
+		err = s.DB.QueryRow("SELECT username FROM users WHERE id = $1", userID).Scan(&username)
+		if err != nil {
+			http.Error(w, "ユーザー名の取得に失敗しました", http.StatusInternalServerError)
+			return
+		}
+
+		s.WSHub.Broadcast <- WSMessage{
+			RoomID: roomID,
+			Data: map[string]any{
+				"type": "user_entered",
+				"user": username,
+			},
 		}
 	}
 
@@ -143,6 +177,7 @@ func (s *Server) JoinGroupRoomHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "メンバーの取得に失敗しました", http.StatusInternalServerError)
 		return
 	}
+
 	defer rows.Close()
 
 	var members []string

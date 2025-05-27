@@ -22,6 +22,8 @@ export default function ChatRoomListPage() {
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const [mentionMap, setMentionMap] = useState<Record<string, string>>({});
   const mentionMapRef = useRef(mentionMap); // 🔁 绑定 ref
+  const [roomNameToId, setRoomNameToId] = useState<Record<string, number>>({});
+
 
   // デモ用：一対一ルームの初期データ
   const oneToOneRooms = [{ label: "ルーム1", id: 1 }];
@@ -92,16 +94,17 @@ export default function ChatRoomListPage() {
       });
   }, [router]);
 
+  
   // 定期的にルーム・未読数を更新
   useEffect(() => {
     fetchRoomsAndUnreadCounts();
     fetchMentionNotifications();
 
-    const interval = setInterval(() => {
-      fetchRoomsAndUnreadCounts();
-      fetchMentionNotifications(); // 每 5 秒刷新一次 mention 状态
-    }, 5000);
-    return () => clearInterval(interval);
+    // const interval = setInterval(() => {
+    //   fetchRoomsAndUnreadCounts();
+    //   fetchMentionNotifications(); // 每 5 秒刷新一次 mention 状态
+    // }, 5000);
+    // return () => clearInterval(interval);
   }, []);
 
   // グループ名クリック時の処理（存在すれば移動、なければ作成）
@@ -128,9 +131,28 @@ export default function ChatRoomListPage() {
     }
   };
 
+  useEffect(() => {
+    const fetchRoomMappings = async () => {
+      const res = await fetch("http://localhost:8081/rooms", { credentials: "include" });
+      if (!res.ok) return;
+      const rooms = await res.json();
+
+      const mapping: Record<string, number> = {};
+      rooms.forEach((r: any) => {
+        if (r.is_group && defaultGroupNames.includes(r.room_name)) {
+          mapping[r.room_name] = r.id;
+        }
+      });
+      setRoomNameToId(mapping);
+    };
+
+    fetchRoomMappings();
+  }, []);
 
   // WebSocket接続管理（ホームルーム ID 0）
   useEffect(() => {
+    if (currentUserId === null) return;
+
     if (wsRef.current) wsRef.current.close();
     const ws = new WebSocket("ws://localhost:8081/ws?room_id=0");
     wsRef.current = ws;
@@ -138,27 +160,40 @@ export default function ChatRoomListPage() {
     ws.onopen = () => {
       console.log("✅ WebSocket 接続成功（ホーム）");
     };
-    ws.onmessage = (event) => {
-      const parsed = JSON.parse(event.data);
-      // if (parsed.type === "mention_notify" && parsed.to_user === currentUserId) {
-      if (parsed.type === "mention_notify" && String(parsed.to_user) === String(currentUserId)){
-        // const roomId = parsed.room_id;
-        const roomId = String(parsed.room_id); // ✅
 
-        // const roomId = Number(parsed.room_id); // 👈 确保是数字
+    ws.onmessage = (event) => {
+      console.log("📩 WebSocket メッセージ（ホーム）:", event.data); // ✅ 原始内容先打印
+
+      const parsed = JSON.parse(event.data);
+      console.log("📩 WebSocket parsed（ホーム）:", parsed); // ✅ 结构打印
+
+      if (
+        parsed.type === "mention_notify" &&
+        currentUserId !== null &&
+        String(parsed.to_user) === String(currentUserId)
+      ) {
+        const roomId = String(parsed.room_id);
         const from = parsed.from;
         setMentionMap(prev => ({ ...prev, [roomId]: from }));
-        console.log("💡 setting mentionMap for roomId", roomId, "from", from);
+        return;
       }
-      console.log("📩 WebSocket メッセージ（ホーム）:", parsed);
-      console.log("📩 mention_notify 受信:", parsed);
-      
-    };
+
+      if (parsed.type === "unread_update") {
+        const unreadMap = parsed.unread_map || {};
+        const roomId = parsed.room_id;
+
+        // ✅ 只有当前用户在 map 中才更新
+        if (unreadMap[currentUserId] !== undefined) {
+          const count = unreadMap[currentUserId];
+          setUnreadCounts(prev => ({ ...prev, [roomId]: count }));
+        }
+      }
+    }
     ws.onclose = () => {
       console.log("🔌 WebSocket 切断（ホーム）");
     };
     return () => ws.close();
-  }, []);
+  }, [currentUserId]);
 
 
   // 新規グループルーム作成
@@ -263,20 +298,18 @@ export default function ChatRoomListPage() {
           <div className="bg-gray-100 rounded p-4 shadow" style={{ backgroundColor: "#2e8b57" }}>
             <h4 className="text-md font-semibold text-white mb-3 flex justify-between items-center">
               グループルーム
-              <button
+              {/* <button
                 onClick={handleNewGroupClick}
                 className="bg-white text-[#2e8b57] px-2 py-1 text-sm rounded shadow hover:bg-gray-100"
               >
                 + 新規作成
-              </button>
+              </button> */}
             </h4>
             <ul className="space-y-3">
               {defaultGroupNames.map((name) => {
-                const room = groupRooms.find((r) => r.room_name === name);
-                const roomId = room?.id;
-                const hasUnread = roomId && unreadCounts[roomId] > 0;
-                const mentionUser = roomId && mentionMap[String(roomId)];
-
+                const roomId = roomNameToId[name]; // ✅ 直接使用映射
+                const hasUnread = roomId !== undefined && (unreadCounts[roomId] ?? 0) > 0;
+                const mentionUser = roomId !== undefined ? mentionMap[String(roomId)] : null;
                 return (
                   <li
                     key={name}
@@ -295,8 +328,6 @@ export default function ChatRoomListPage() {
                   </li>
                 );
               })}
-
-
 
             </ul>
           </div>

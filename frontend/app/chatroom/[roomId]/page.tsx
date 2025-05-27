@@ -17,7 +17,7 @@ export default function ChatRoomWithUserPage() {
   const [users, setUsers] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<string | null>(null);
-
+  const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const [userToRoomIdMap, setUserToRoomIdMap] = useState<Record<string, number>>({});
   const [unreadCounts, setUnreadCounts] = useState<Record<number, number>>({});
   const [groupRooms, setGroupRooms] = useState<RoomInfo[]>([]);
@@ -36,10 +36,22 @@ export default function ChatRoomWithUserPage() {
       body: JSON.stringify({ user1: currentUser, user2: targetUser }),
     });
 
+    if (!res.ok) {
+      console.error("❌ チャットルーム作成失敗");
+      return;
+    }
+
     const data = await res.json();
     const actualRoomId = data.room_id;
 
     setUnreadCounts((prev) => ({ ...prev, [data.room_id]: 0 }));
+
+     // ✅ 告诉后端：该房间我已经进入，标记为已读
+    await fetch(`http://localhost:8081/rooms/${data.room_id}/markread`, {
+      method: "POST",
+      credentials: "include",
+    });
+
 
     router.push(`/chatroom/${actualRoomId}/${targetUser}`);
   };
@@ -57,6 +69,7 @@ export default function ChatRoomWithUserPage() {
       .then((data) => {
         if (data?.username) {
           setCurrentUser(data.username);
+          setCurrentUserId(data.user_id);
           fetch("http://localhost:8081/users", { credentials: "include" })
             .then(async (res) => {
               if (!res.ok) throw new Error(await res.text());
@@ -75,25 +88,53 @@ export default function ChatRoomWithUserPage() {
       });
   }, [router]);
 
+  useEffect(() => {
+    console.log("✅ userToRoomIdMap 更新:", userToRoomIdMap);
+  }, [userToRoomIdMap]);
+
+  useEffect(() => {
+    console.log("✅ unreadCounts 更新:", unreadCounts);
+  }, [unreadCounts]);
+
   // WebSocket：通知・未読数更新
   useEffect(() => {
     if (!currentUser) return;
 
-    const ws = new WebSocket(`ws://localhost:8081/ws?user=${currentUser}`);
+    const ws = new WebSocket(`ws://localhost:8081/ws?room_id=0`);
 
     ws.onopen = () => {
       console.log("✅ WebSocket 接続成功");
     };
 
+
     ws.onmessage = (event) => {
       const parsed = JSON.parse(event.data);
-      if (parsed.type === "new_unread" && parsed.room_id && parsed.unread_count !== undefined) {
-        setUnreadCounts((prev) => ({
-          ...prev,
-          [parsed.room_id]: parsed.unread_count,
-        }));
+      console.log("📩 WebSocket 收到:", parsed);
+
+      if (
+        parsed.type === "unread_update" &&
+        parsed.unread_map &&
+        parsed.room_id !== undefined &&
+        currentUserId !== null
+      ) {
+        const count = parsed.unread_map[currentUserId];
+        console.log("🧩 当前用户 ID:", currentUserId);
+        console.log("📦 unread_map:", parsed.unread_map);
+        console.log("🔍 对应 unread:", count);
+
+        if (typeof count === "number") {
+          console.log("✅ 准备写入 unreadCounts:", parsed.room_id, "=>", count);
+          setUnreadCounts((prev) => ({
+            ...prev,
+            [parsed.room_id]: count,
+          }));
+        } else {
+          console.warn("⚠️ 当前用户未出现在 unread_map 中");
+        }
       }
     };
+
+
 
     ws.onerror = (err) => {
       console.error("❌ WebSocket エラー：", err);
@@ -104,8 +145,37 @@ export default function ChatRoomWithUserPage() {
     };
 
     return () => ws.close();
-  }, [currentUser]);
+  }, [currentUserId]);
 
+  const fetchRoomUserMapping = async () => {
+    const res = await fetch("http://localhost:8081/oneroom", {
+      credentials: "include",
+    });
+
+    if (!res.ok) return;
+    const allRooms: RoomInfo[] = await res.json();
+    const matchedRooms = Array.isArray(allRooms)
+      ? allRooms.filter((room) => room.is_group === false)
+      : [];
+
+    const userToRoomId: Record<string, number> = {};
+    for (const room of matchedRooms) {
+      const parts = String(room.room_name).split("_").map(s => s.trim()); // <-- 强制为字符串
+      const otherUser = parts.find((name) => name !== currentUser);
+      if (otherUser) {
+        userToRoomId[otherUser.trim()] = room.id;
+      }
+      console.log("👤 currentUser =", currentUser);
+      console.log("📦 room_name parts =", parts);
+      console.log("👉 matched otherUser =", otherUser);
+      if (otherUser) {
+        userToRoomId[otherUser] = room.id;
+      }
+    }
+    setUserToRoomIdMap(userToRoomId);
+    console.log("🧾 所有已加入房间:", matchedRooms.map(r => `${r.room_name} = ${r.id}`));
+    
+  };
   // 既存ルーム & 未読数取得
   const fetchRoomsAndUnreadCounts = async () => {
     const res = await fetch("http://localhost:8081/oneroom", {
@@ -137,22 +207,26 @@ export default function ChatRoomWithUserPage() {
       const data = await res.json();
       counts[room.id] = data.unread_count;
     }
+    setUserToRoomIdMap(userToRoomId);
     setUnreadCounts(counts);
   };
 
   useEffect(() => {
-  if (!currentUser) {
-    console.warn("⚠️ currentUser 為 null，略過 fetchRoomsAndUnreadCounts 初始化");
-    return;
-  }
-  fetchRoomsAndUnreadCounts();
-  const interval = setInterval(() => {
-    if (currentUser) {
-      fetchRoomsAndUnreadCounts();
+    if (!currentUser) {
+      console.debug("⏳ currentUser 尚未加载，等待中...");
+      return;
     }
-  }, 5000);
-  return () => clearInterval(interval);
-}, [currentUser]);
+    fetchRoomUserMapping();
+    fetchRoomsAndUnreadCounts(); // ✅ 加这句
+    // fetchRoomsAndUnreadCounts();
+    // const interval = setInterval(() => {
+    //   if (currentUser) {
+    //     fetchRoomsAndUnreadCounts();
+    //   }
+    // }, 5000);
+    // return () => clearInterval(interval);
+  }, [currentUser]);
+
 
 
   if (checking || currentUser === null) {
@@ -216,19 +290,38 @@ export default function ChatRoomWithUserPage() {
           <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide pr-1">
             <ul className="space-y-3 w-2/3 mx-auto">
               {users
-                .filter((user) => user !== currentUser) // ✅ 過濾掉自己
-                .map((user) => (
-                  <li
-                    key={user}
-                    onClick={() => handleUserClick(user)}
-                    className="relative p-2 bg-white rounded shadow hover:bg-gray-200 flex justify-center items-center mx-auto cursor-pointer"
-                  >
-                    {user}
-                    {userToRoomIdMap[user] !== undefined && unreadCounts[userToRoomIdMap[user]] > 0 && (
-                      <span className="absolute right-1 top-1 w-2.5 h-2.5 bg-red-500 rounded-full shadow"></span>
-                    )}
-                  </li>
-                ))}
+                .filter((user) => user !== currentUser)
+                .map((userRaw) => {
+                  const user = userRaw.trim();
+                  const roomId = userToRoomIdMap[user];
+                  const unread = unreadCounts[roomId];
+
+                  // 🔍 输出详细调试日志
+                  console.log(
+                    "🔍 user =", user,
+                    "| roomId =", roomId,
+                    "| unreadCounts =", unreadCounts,
+                    "| 当前 unread =", unread
+                  );
+
+                  const showRedDot = roomId !== undefined && typeof unread === "number" && unread > 0;
+
+                  return (
+                    <li
+                      key={user}
+                      onClick={() => handleUserClick(user)}
+                      className="relative flex items-center justify-center rounded bg-white p-3 text-sm font-medium shadow transition hover:bg-gray-100"
+                    >
+                      {user}
+                      {showRedDot ? (
+                        <span className="absolute right-1 top-1 w-2.5 h-2.5 rounded-full bg-red-500 shadow" />
+                      ) : (
+                        <span className="absolute right-1 top-1 text-[8px] text-gray-300">{unread ?? "-"}</span> // 可选调试辅助显示
+                      )}
+                    </li>
+                  );
+                })}
+
             </ul>
           </div>
         </div>
