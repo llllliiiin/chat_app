@@ -310,7 +310,7 @@ export default function ChatRoomWithUserPage() {
                     <li
                       key={user}
                       onClick={() => handleUserClick(user)}
-                      className="bg-white text-[#2e8b57] rounded px-3 py-2 text-m text-center"
+                      className="relative bg-white text-[#2e8b57] rounded px-3 py-2 text-m text-center"
                     >
                       {user}
                       {showRedDot && (

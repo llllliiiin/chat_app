@@ -684,7 +684,7 @@ export default function UserPage() {
                   //瀏覽器會自動將 /chatroom/ルーム1/さとう 編碼為 /chatroom/%E3%83%AB%E3%83%BC%E3%83%A01/%E3%81%95%E3%81%A8%E3%81%86；
                   //而 useParams() 拿到的是「原始 URL 字串」，所以需要手動 decode 才能在畫面中還原。
                   onClick={() => handleUserClick(user)}
-                  className="bg-white text-[#2e8b57] rounded px-3 py-2 text-m text-center"
+                  className="relative bg-white text-[#2e8b57] rounded px-3 py-2 text-m text-center"
                 >
                   {user}
                   {userToRoomIdMap[user] !== undefined && unreadCounts[userToRoomIdMap[user]] > 0 && (
