@@ -69,18 +69,6 @@ func (hub *WebSocketHub) Run() {
 			}
 			hub.Mutex.Unlock()
 
-		// Broadcast チャネルから受信したメッセージをルーム内すべての接続に送信
-		// case msg := <-hub.Broadcast:
-		// 	log.Printf("📣 Broadcasting to room %d: %+v", msg.RoomID, msg.Data) // ✅ 新增这一行
-		// 	hub.Mutex.Lock()
-		// 	for conn := range hub.Clients[msg.RoomID] {
-		// 		if err := conn.WriteJSON(msg.Data); err != nil {
-		// 			log.Println("🔴 WebSocket 書き込みに失敗:", err) // 寫入 WebSocket 失敗
-		// 			conn.Close()
-		// 			delete(hub.Clients[msg.RoomID], conn)
-		// 		}
-		// 	}
-		// 	hub.Mutex.Unlock()
 		case msg := <-hub.Broadcast:
 			log.Printf("📣 Broadcasting to room %d: %+v", msg.RoomID, msg.Data)
 

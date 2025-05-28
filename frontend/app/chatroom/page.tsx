@@ -21,7 +21,7 @@ export default function ChatRoomListPage() {
   const wsRef = useRef<WebSocket | null>(null);
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const [mentionMap, setMentionMap] = useState<Record<string, string>>({});
-  const mentionMapRef = useRef(mentionMap); // 🔁 绑定 ref
+  // const mentionMapRef = useRef(mentionMap); // 🔁 绑定 ref
   const [roomNameToId, setRoomNameToId] = useState<Record<string, number>>({});
 
 
@@ -30,44 +30,106 @@ export default function ChatRoomListPage() {
   // デフォルトのグループルーム名
   const defaultGroupNames = ["ルーム1", "ルーム2", "ルーム3"];
 
-  // グループルーム一覧と未読件数を取得
-  const fetchRoomsAndUnreadCounts = async () => {
-    const res = await fetch("http://localhost:8081/rooms", {
-      credentials: "include",
-    });
+  // グループルームの一覧と未読件数を取得する非同期関数
+  const fetchRoomsData = async () => {
+    const res = await fetch("http://localhost:8081/rooms", { credentials: "include" });
     if (!res.ok) return;
-    const allRooms: RoomInfo[] = await res.json();
-    if (!Array.isArray(allRooms)) return;
 
-    const matchedRooms: RoomInfo[] = allRooms.filter(
-      (room) => defaultGroupNames.includes(room.room_name) && room.is_group
+    const rooms = await res.json();
+
+    const groupRooms = rooms.filter(
+      (r: any) => r.is_group && defaultGroupNames.includes(r.room_name)
     );
-    setGroupRooms(matchedRooms);
+    setGroupRooms(groupRooms);
 
     const counts: Record<number, number> = {};
-    for (const room of matchedRooms) {
-      const res = await fetch(
-        `http://localhost:8081/rooms/${room.id}/unread-count`,
-        { credentials: "include" }
-      );
-      const data = await res.json();
-      counts[room.id] = data.unread_count;
-    }
+    const mapping: Record<string, number> = {};
+
+    await Promise.all(
+      groupRooms.map(async (room: any) => {
+        mapping[room.room_name] = room.id;
+
+        const unreadRes = await fetch(
+          `http://localhost:8081/rooms/${room.id}/unread-count`,
+          { credentials: "include" }
+        );
+        if (unreadRes.ok) {
+          const data = await unreadRes.json();
+          counts[room.id] = data.unread_count;
+        }
+      })
+    );
+
     setUnreadCounts(counts);
+    setRoomNameToId(mapping);
   };
 
+  // メンション通知を取得して状態に反映する非同期関数
   const fetchMentionNotifications = async () => {
     try {
       const res = await fetch("http://localhost:8081/mention-notifications", { credentials: "include" });
       if (!res.ok) {
-        // throw new Error("mention API failed");
         router.push("/login");
         return; 
       }
       const data = await res.json();
-      setMentionMap(data); // 例如 { "47": "bob" }
+      setMentionMap(data); 
     } catch (err) {
       console.error("❌ mention fetch error:", err);
+    }
+  };
+
+  // デフォルトのグループルーム名をクリックしたときの処理（存在すれば移動、なければ新規作成）
+  const handleDefaultGroupClick = async (roomName: string) => {
+    let existing = groupRooms.find((r) => r.room_name === roomName);
+    if (existing) {
+      setUnreadCounts((prev) => ({ ...prev, [existing.id]: 0 }));
+      router.push(`/chatroom/group?room_id=${existing.id}`);
+      return;
+    } else {
+      const res = await fetch("http://localhost:8081/create-group-room", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ room_name: roomName, user_ids: [] }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        router.push(`/chatroom/group?room_id=${data.room_id}`);
+      } else {
+        alert("グループ作成に失敗しました");
+      }
+    }
+  };
+
+  // 新しいグループルームを作成する処理 未使用
+  // const handleNewGroupClick = async () => {
+  //   const nextIndex = groupRooms.length + 1;
+  //   const newName = `ルーム${nextIndex + 3}`;
+
+  //   const res = await fetch("http://localhost:8081/create-group-room", {
+  //     method: "POST",
+  //     headers: { "Content-Type": "application/json" },
+  //     credentials: "include",
+  //     body: JSON.stringify({ room_name: newName, user_ids: [] }),
+  //   });
+
+  //   if (res.ok) {
+  //     const data = await res.json();
+  //     router.push(`/chatroom/${data.room_id}/group`);
+  //   } else {
+  //     alert("グループ作成に失敗しました");
+  //   }
+  // };
+
+  // 任意のルーム（グループまたは一対一）をクリックしたときに遷移する処理
+  const handleRoomClick = (roomId: number) => {
+    const room = groupRooms.find((r) => r.id === roomId);
+    if (room && room.is_group) {
+      router.push(`/chatroom/group?room_id=${room.id}`);
+    } else {
+      router.push(`/chatroom/${roomId}`);
     }
   };
   
@@ -97,56 +159,8 @@ export default function ChatRoomListPage() {
   
   // 定期的にルーム・未読数を更新
   useEffect(() => {
-    fetchRoomsAndUnreadCounts();
+    fetchRoomsData();
     fetchMentionNotifications();
-
-    // const interval = setInterval(() => {
-    //   fetchRoomsAndUnreadCounts();
-    //   fetchMentionNotifications(); // 每 5 秒刷新一次 mention 状态
-    // }, 5000);
-    // return () => clearInterval(interval);
-  }, []);
-
-  // グループ名クリック時の処理（存在すれば移動、なければ作成）
-  const handleDefaultGroupClick = async (roomName: string) => {
-    let existing = groupRooms.find((r) => r.room_name === roomName);
-    if (existing) {
-      setUnreadCounts((prev) => ({ ...prev, [existing.id]: 0 }));
-      router.push(`/chatroom/group?room_id=${existing.id}`);
-      return;
-    } else {
-      const res = await fetch("http://localhost:8081/create-group-room", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ room_name: roomName, user_ids: [] }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        router.push(`/chatroom/group?room_id=${data.room_id}`);
-      } else {
-        alert("グループ作成に失敗しました");
-      }
-    }
-  };
-
-  useEffect(() => {
-    const fetchRoomMappings = async () => {
-      const res = await fetch("http://localhost:8081/rooms", { credentials: "include" });
-      if (!res.ok) return;
-      const rooms = await res.json();
-
-      const mapping: Record<string, number> = {};
-      rooms.forEach((r: any) => {
-        if (r.is_group && defaultGroupNames.includes(r.room_name)) {
-          mapping[r.room_name] = r.id;
-        }
-      });
-      setRoomNameToId(mapping);
-    };
-
-    fetchRoomMappings();
   }, []);
 
   // WebSocket接続管理（ホームルーム ID 0）
@@ -162,10 +176,10 @@ export default function ChatRoomListPage() {
     };
 
     ws.onmessage = (event) => {
-      console.log("📩 WebSocket メッセージ（ホーム）:", event.data); // ✅ 原始内容先打印
+      // console.log("📩 WebSocket メッセージ（ホーム）:", event.data); // テスト用
 
       const parsed = JSON.parse(event.data);
-      console.log("📩 WebSocket parsed（ホーム）:", parsed); // ✅ 结构打印
+      // console.log("📩 WebSocket parsed（ホーム）:", parsed); // テスト用
 
       if (
         parsed.type === "mention_notify" &&
@@ -182,7 +196,7 @@ export default function ChatRoomListPage() {
         const unreadMap = parsed.unread_map || {};
         const roomId = parsed.room_id;
 
-        // ✅ 只有当前用户在 map 中才更新
+        //  現在のユーザーが map に含まれている場合のみ更新する
         if (unreadMap[currentUserId] !== undefined) {
           const count = unreadMap[currentUserId];
           setUnreadCounts(prev => ({ ...prev, [roomId]: count }));
@@ -194,37 +208,6 @@ export default function ChatRoomListPage() {
     };
     return () => ws.close();
   }, [currentUserId]);
-
-
-  // 新規グループルーム作成
-  const handleNewGroupClick = async () => {
-    const nextIndex = groupRooms.length + 1;
-    const newName = `ルーム${nextIndex + 3}`;
-
-    const res = await fetch("http://localhost:8081/create-group-room", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ room_name: newName, user_ids: [] }),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      router.push(`/chatroom/${data.room_id}/group`);
-    } else {
-      alert("グループ作成に失敗しました");
-    }
-  };
-
-  // 任意のルームに遷移
-  const handleRoomClick = (roomId: number) => {
-    const room = groupRooms.find((r) => r.id === roomId);
-    if (room && room.is_group) {
-      router.push(`/chatroom/group?room_id=${room.id}`);
-    } else {
-      router.push(`/chatroom/${roomId}`);
-    }
-  };
 
   return (
     <div className="h-screen flex flex-col">
@@ -272,7 +255,6 @@ export default function ChatRoomListPage() {
       </div>
     </div>
 
-
       {/* ルーム一覧 */}
       <div className="flex-1 flex p-6 bg-white overflow-y-auto">
         <div className="w-full max-w-3xl mx-auto">
@@ -307,7 +289,7 @@ export default function ChatRoomListPage() {
             </h4>
             <ul className="space-y-3">
               {defaultGroupNames.map((name) => {
-                const roomId = roomNameToId[name]; // ✅ 直接使用映射
+                const roomId = roomNameToId[name]; 
                 const hasUnread = roomId !== undefined && (unreadCounts[roomId] ?? 0) > 0;
                 const mentionUser = roomId !== undefined ? mentionMap[String(roomId)] : null;
                 return (
@@ -318,7 +300,6 @@ export default function ChatRoomListPage() {
                   >
                     {name}
                     {hasUnread && (
-                      // <span className="absolute right-3 top-3 w-2.5 h-2.5 bg-red-500 rounded-full shadow"></span>
                       <span className="absolute top-1 right-2 bg-red-500 text-white text-[13px] font-bold px-2 h-[20px] leading-[20px] rounded-[10px] shadow-sm min-w-[26px] text-center">
                         {unreadCounts[roomId] > 99 ? "99+" : unreadCounts[roomId]}
                       </span>
@@ -331,7 +312,6 @@ export default function ChatRoomListPage() {
                   </li>
                 );
               })}
-
             </ul>
           </div>
         </div>

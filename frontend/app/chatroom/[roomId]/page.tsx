@@ -1,5 +1,5 @@
 "use client";
-import { useParams, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 interface RoomInfo {
@@ -9,11 +9,10 @@ interface RoomInfo {
 }
 
 export default function ChatRoomWithUserPage() {
-  const [showMenu, setShowMenu] = useState(false); // 👈 メニューの表示を制御
+  const [showMenu, setShowMenu] = useState(false); 
   const router = useRouter();
-  const params = useParams();
 
-  const [checking, setChecking] = useState(true); // ローディング表示制御用
+  const [checking, setChecking] = useState(true); 
   const [users, setUsers] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<string | null>(null);
@@ -43,17 +42,51 @@ export default function ChatRoomWithUserPage() {
 
     const data = await res.json();
     const actualRoomId = data.room_id;
-
     setUnreadCounts((prev) => ({ ...prev, [data.room_id]: 0 }));
 
-     // ✅ 告诉后端：该房间我已经进入，标记为已读
+    //  サーバーに「このルームを開いた」と通知して、既読にします
     await fetch(`http://localhost:8081/rooms/${data.room_id}/markread`, {
       method: "POST",
       credentials: "include",
     });
 
-
     router.push(`/chatroom/${actualRoomId}/${targetUser}`);
+  };
+
+
+  // 非同期関数を定義して、サーバーからルーム情報を取得します。
+  const fetchRoomsAndMapping = async (currentUser: string) => {
+    const res = await fetch("http://localhost:8081/oneroom", {
+      credentials: "include",
+    });
+
+    if (!res.ok) throw new Error("ルーム取得失敗");
+
+    const allRooms: RoomInfo[] = await res.json();
+    const matchedRooms = allRooms.filter((room) => !room.is_group);
+    setGroupRooms(matchedRooms);
+
+    const mapping: Record<string, number> = {};
+    matchedRooms.forEach((room) => {
+      const other = room.room_name.split("_").find((n) => n !== currentUser);
+      if (other) mapping[other] = room.id;
+    });
+
+    setUserToRoomIdMap(mapping);
+  };
+
+   
+ //未読数取得
+  const fetchUnreadCounts = async (roomIds: number[]) => {
+    const counts: Record<number, number> = {};
+    for (const id of roomIds) {
+      const res = await fetch(`http://localhost:8081/rooms/${id}/unread-count`, {
+        credentials: "include",
+      });
+      const data = await res.json();
+      counts[id] = data.unread_count;
+    }
+    setUnreadCounts(counts);
   };
 
   // 初期化：ログイン認証 & ユーザー一覧取得
@@ -88,13 +121,6 @@ export default function ChatRoomWithUserPage() {
       });
   }, [router]);
 
-  useEffect(() => {
-    console.log("✅ userToRoomIdMap 更新:", userToRoomIdMap);
-  }, [userToRoomIdMap]);
-
-  useEffect(() => {
-    console.log("✅ unreadCounts 更新:", unreadCounts);
-  }, [unreadCounts]);
 
   // WebSocket：通知・未読数更新
   useEffect(() => {
@@ -106,10 +132,9 @@ export default function ChatRoomWithUserPage() {
       console.log("✅ WebSocket 接続成功");
     };
 
-
     ws.onmessage = (event) => {
       const parsed = JSON.parse(event.data);
-      console.log("📩 WebSocket 收到:", parsed);
+      // console.log("📩 WebSocket 收到:", parsed);
 
       if (
         parsed.type === "unread_update" &&
@@ -118,23 +143,20 @@ export default function ChatRoomWithUserPage() {
         currentUserId !== null
       ) {
         const count = parsed.unread_map[currentUserId];
-        console.log("🧩 当前用户 ID:", currentUserId);
-        console.log("📦 unread_map:", parsed.unread_map);
-        console.log("🔍 对应 unread:", count);
+        // console.log("🧩 当前用户 ID:", currentUserId);
+        // console.log("📦 unread_map:", parsed.unread_map);
+        // console.log("🔍 对应 unread:", count);
 
         if (typeof count === "number") {
-          console.log("✅ 准备写入 unreadCounts:", parsed.room_id, "=>", count);
           setUnreadCounts((prev) => ({
             ...prev,
             [parsed.room_id]: count,
           }));
         } else {
-          console.warn("⚠️ 当前用户未出现在 unread_map 中");
+          console.warn("⚠️  ユーザーはunread_mapの中ではない");
         }
       }
     };
-
-
 
     ws.onerror = (err) => {
       console.error("❌ WebSocket エラー：", err);
@@ -147,86 +169,22 @@ export default function ChatRoomWithUserPage() {
     return () => ws.close();
   }, [currentUserId]);
 
-  const fetchRoomUserMapping = async () => {
-    const res = await fetch("http://localhost:8081/oneroom", {
-      credentials: "include",
-    });
-
-    if (!res.ok) return;
-    const allRooms: RoomInfo[] = await res.json();
-    const matchedRooms = Array.isArray(allRooms)
-      ? allRooms.filter((room) => room.is_group === false)
-      : [];
-
-    const userToRoomId: Record<string, number> = {};
-    for (const room of matchedRooms) {
-      const parts = String(room.room_name).split("_").map(s => s.trim()); // <-- 强制为字符串
-      const otherUser = parts.find((name) => name !== currentUser);
-      if (otherUser) {
-        userToRoomId[otherUser.trim()] = room.id;
-      }
-      console.log("👤 currentUser =", currentUser);
-      console.log("📦 room_name parts =", parts);
-      console.log("👉 matched otherUser =", otherUser);
-      if (otherUser) {
-        userToRoomId[otherUser] = room.id;
-      }
-    }
-    setUserToRoomIdMap(userToRoomId);
-    console.log("🧾 所有已加入房间:", matchedRooms.map(r => `${r.room_name} = ${r.id}`));
-    
-  };
-  // 既存ルーム & 未読数取得
-  const fetchRoomsAndUnreadCounts = async () => {
-    const res = await fetch("http://localhost:8081/oneroom", {
-      credentials: "include",
-    });
-
-    if (!res.ok) throw new Error("ルームデータ取得失敗");
-    const allRooms: RoomInfo[] = await res.json();
-    if (!Array.isArray(allRooms)) return;
-
-    const matchedRooms = allRooms.filter((room) => room.is_group === false);
-    setGroupRooms(matchedRooms);
-
-    const userToRoomId: Record<string, number> = {};
-    for (const room of matchedRooms) {
-      const parts = room.room_name.split("_");
-      const otherUser = parts.find((name) => name !== currentUser);
-      if (otherUser) {
-        userToRoomId[otherUser] = room.id;
-      }
-    }
-    setUserToRoomIdMap(userToRoomId);
-
-    const counts: Record<number, number> = {};
-    for (const room of matchedRooms) {
-      const res = await fetch(`http://localhost:8081/rooms/${room.id}/unread-count`, {
-        credentials: "include",
-      });
-      const data = await res.json();
-      counts[room.id] = data.unread_count;
-    }
-    setUserToRoomIdMap(userToRoomId);
-    setUnreadCounts(counts);
-  };
 
   useEffect(() => {
-    if (!currentUser) {
-      console.debug("⏳ currentUser 尚未加载，等待中...");
-      return;
-    }
-    fetchRoomUserMapping();
-    fetchRoomsAndUnreadCounts(); 
-    // fetchRoomsAndUnreadCounts();
-    // const interval = setInterval(() => {
-    //   if (currentUser) {
-    //     fetchRoomsAndUnreadCounts();
-    //   }
-    // }, 5000);
-    // return () => clearInterval(interval);
+    if (!currentUser) return;
+    const load = async () => {
+      await fetchRoomsAndMapping(currentUser);
+    };
+    load();
   }, [currentUser]);
 
+
+  useEffect(() => {
+    const ids = groupRooms.map((r) => r.id);
+    if (ids.length > 0) {
+      fetchUnreadCounts(ids);
+    }
+  }, [groupRooms]);
 
 
   if (checking || currentUser === null) {
@@ -284,7 +242,7 @@ export default function ChatRoomWithUserPage() {
 
 
       <div className="flex-1 flex min-h-0">
-        {/* 左側：使用者列表 */}
+        {/* 左側：ユーザー一覧 */}
         <div className="w-1/4 p-4 flex flex-col min-h-0" style={{ backgroundColor: "#2e8b57" }}>
           <h2 className="text-xl text-white font-bold mb-4 text-center">ユーザー一覧</h2>
           <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide pr-1">
@@ -295,17 +253,7 @@ export default function ChatRoomWithUserPage() {
                   const user = userRaw.trim();
                   const roomId = userToRoomIdMap[user];
                   const unread = unreadCounts[roomId];
-
-                  // 🔍 输出详细调试日志
-                  console.log(
-                    "🔍 user =", user,
-                    "| roomId =", roomId,
-                    "| unreadCounts =", unreadCounts,
-                    "| 当前 unread =", unread
-                  );
-
                   const showRedDot = roomId !== undefined && typeof unread === "number" && unread > 0;
-
                   return (
                     <li
                       key={user}
@@ -321,12 +269,11 @@ export default function ChatRoomWithUserPage() {
                     </li>
                   );
                 })}
-
             </ul>
           </div>
         </div>
 
-        {/* 右側：提示文字區 */}
+        {/* 右側 */}
         <div className="w-3/4 bg-white flex items-center justify-center">
           <h2 className="text-lg text-[#2e8b57] font-semibold">ユーザーを選んでください</h2>
         </div>

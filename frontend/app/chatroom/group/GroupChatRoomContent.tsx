@@ -1,11 +1,8 @@
 "use client";
 import EmojiPicker from 'emoji-picker-react';
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import MessageItem from "./components/MessageItem";
-
-
-
 
 export default function GroupChatRoomContent() {
   const wsRef = useRef<WebSocket | null>(null);
@@ -29,21 +26,160 @@ export default function GroupChatRoomContent() {
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
- //hide
-  const [actionTargetMsgId, setActionTargetMsgId] = useState<number | null>(null);
+
   const [actionBoxVisible, setActionBoxVisible] = useState<number | null>(null);
   const actionBoxRefs = useRef<Map<number, HTMLDivElement | null>>(new Map());
 
   const [messageReactions, setMessageReactions] = useState<Record<number, { emoji: string; users: string[] }[]>>({});
 
-  const [mentions, setMentions] = useState<string[]>([]); // ✅ 追加
-  const [showMentionList, setShowMentionList] = useState(false); // ✅ 追加
-  const [cursorPos, setCursorPos] = useState<number>(0); // ✅ 追加
+  const [mentions, setMentions] = useState<string[]>([]); 
+  const [showMentionList, setShowMentionList] = useState(false); 
+  const [cursorPos, setCursorPos] = useState<number>(0); 
   const [replyTo, setReplyTo] = useState<{id: number; content: string; sender: string; thread_root_id?: number; attachment?: string;} | null>(null);
 
+  //  メッセージの既読ユーザーを取得する非同期関数
+  const fetchReads = async () => {
+    const result: Record<number, string[]> = {};
+    try {
+      for (const msg of messages) {
+        const res = await fetch(`http://localhost:8081/messages/${msg.id}/readers`, {
+          credentials: "include",
+        });
+        const data = await res.json();
+        result[msg.id] = data.readers || [];
+      }
+      setMessageReads(result);
+    } catch (err) {
+      console.error("讀取 messageReads 時發生錯誤", err);
+    }
+  };
 
+  // メッセージ送信時の処理（API へ POST）
+  const handleSend = async () => {
+    const parsedRoomId = parseInt(roomId as string);
+    if (!message.trim() || !token || isNaN(parsedRoomId)) return;
+    const mentionRegex = /@(\w+)/g;
+    const foundMentions = [...message.matchAll(mentionRegex)].map(m => m[1]);4
+
+    await fetch("http://localhost:8081/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+       body: JSON.stringify({
+        room_id: parsedRoomId,
+        content: message,
+        thread_root_id: replyTo?.id ?? null, // ✅ 設定 parent message id
+        mentions: foundMentions,
+      }),
+    });
+    setMessage("");
+    setReplyTo(null); // ✅ 清空 reply 狀態
+    setMentions([]);
+  };
+
+  // グループチャットから退室する処理
+  const handleLeaveGroup = async () => {
+    if (!roomId || !token) return;
+
+    wsRef.current?.close();
+
+    const res = await fetch(`http://localhost:8081/rooms/${roomId}/leave`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (res.ok) {
+      alert("退室しました");
+      router.push("/chatroom");
+    } else {
+      alert("退室失敗しました");
+    }
+  };
+
+  // メッセージの送信取消（2分以内）
+  const handleRevoke = async (msgId: number) => {
+    const res = await fetch(`http://localhost:8081/messages/${msgId}/revoke`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (res.ok) {
+      setMessages(prev => prev.filter(m => m.id !== msgId));
+      actionBoxRefs.current.delete(msgId); // ← 清理对应引用
+    } else {
+      alert("撤回に失敗しました（2分以上経過した可能性があります）");
+    }
+  };
+  
+  // メッセージを非表示にする処理
+  const handleHide = async (msgId: number) => {
+    const res = await fetch(`http://localhost:8081/messages/${msgId}/hide`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (res.ok) {
+      setMessages(prev => prev.filter(m => m.id !== msgId));
+      actionBoxRefs.current.delete(msgId); // ← 清理对应引用
+    } else {
+      alert("削除に失敗しました");
+    }
+  };
+
+  // メッセージにリアクション（絵文字）を付ける処理
+  const handleReaction = async (targetMessageId: number, emoji: string) => {
+    await fetch("http://localhost:8081/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        room_id: parseInt(roomId!),
+        content: `reaction:${emoji}:${targetMessageId}`,
+        thread_root_id: null,
+        mentions: [],
+      }),
+    });
+  };
+
+  //画像ファイルをアップロードする処理
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !roomId ) return;
+
+    const reader = new FileReader();
+    reader.onload = () => setPreviewImage(reader.result as string);
+    reader.readAsDataURL(file);
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("room_id", roomId.toString());
+    formData.append("type", "image");
+
+    await fetch("http://localhost:8081/messages/upload", {
+      method: "POST",
+      credentials: "include",
+      body: formData,
+    });
+
+    setPreviewImage(null);
+  };
+
+  //通常ファイルをアップロードする処理
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !roomId) return;
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("room_id", roomId.toString());
+    formData.append("type", "file");
+
+    await fetch("http://localhost:8081/messages/upload", {
+      method: "POST",
+      credentials: "include",
+      body: formData,
+    });
+  };
+
+  // /me API 経由で現在のユーザー名を取得
   useEffect(() => {
-    // ✅ /me API 経由で現在のユーザー名を取得
     fetch("http://localhost:8081/me", { credentials: "include" })
       .then((res) => {
         if (!res.ok) {
@@ -63,6 +199,7 @@ export default function GroupChatRoomContent() {
       });
   }, [router]);
 
+  //グループルームに入室し、サーバーが参加者を記録する;ルーム名を取得して、画面の上部に表示する;過去のメッセージ履歴を取得して表示する
   useEffect(() => {
     if (!roomId || !token) return;
     fetch(`http://localhost:8081/rooms/${roomId}/join-group`, {
@@ -79,40 +216,83 @@ export default function GroupChatRoomContent() {
         if (data.room_name) setRoomTitle(data.room_name);
       });
 
-    fetch(`http://localhost:8081/messages?room_id=${roomId}`, {
-      credentials: "include",
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        const msgs = (data.messages || [])
-          .filter((m: any) => !m.content?.startsWith("reaction:")) // ✅ 過濾掉 reaction 訊息
-          .map((m: any) => ({
-            id: m.id,
-            content: m.content,
-            sender: m.sender,
-            thread_root_id: m.thread_root_id, 
-            attachment: m.attachment || undefined,
-          }));
-        setMessages(msgs);
-      });
-  }, [roomId, token]);
+      fetch(`http://localhost:8081/messages?room_id=${roomId}`, {
+        credentials: "include",
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          const rawMessages = data.messages || [];
 
-  const fetchReads = async () => {
-    const result: Record<number, string[]> = {};
-    try {
-      for (const msg of messages) {
-        const res = await fetch(`http://localhost:8081/messages/${msg.id}/readers`, {
-          credentials: "include",
+          const normalMessages: {
+            id: number;
+            content: string;
+            sender: string;
+            thread_root_id?: number | null;
+            attachment?: string;
+          }[] = [];
+
+          const userEmojiMap: { [messageId: number]: { [user: string]: string } } = {};
+          const reactionMap: {
+            [messageId: number]: {
+              [emoji: string]: string[]; // emoji → users[]
+            };
+          } = {};
+
+          for (const m of rawMessages) {
+            if (m.content?.startsWith("reaction:")) {
+              const [, emoji, targetIdStr] = m.content.split(":");
+              const targetId = parseInt(targetIdStr);
+
+              if (!reactionMap[targetId]) {
+                reactionMap[targetId] = {};
+              }
+
+              if (!userEmojiMap[targetId]) {
+                userEmojiMap[targetId] = {};
+              }
+
+              const previousEmoji = userEmojiMap[targetId][m.sender];
+
+              if (previousEmoji === emoji) {
+                reactionMap[targetId][emoji] = reactionMap[targetId][emoji]?.filter((u) => u !== m.sender);
+                delete userEmojiMap[targetId][m.sender];
+              } else {
+                if (previousEmoji) {
+                  reactionMap[targetId][previousEmoji] = reactionMap[targetId][previousEmoji]?.filter((u) => u !== m.sender);
+                }
+
+                if (!reactionMap[targetId][emoji]) {
+                  reactionMap[targetId][emoji] = [];
+                }
+                reactionMap[targetId][emoji].push(m.sender);
+                userEmojiMap[targetId][m.sender] = emoji;
+              }
+            } else {
+              normalMessages.push({
+                id: m.id,
+                content: m.content,
+                sender: m.sender,
+                thread_root_id: m.thread_root_id,
+                attachment: m.attachment || undefined,
+              });
+            }
+          }
+
+          setMessages(normalMessages);
+
+          const structured: typeof messageReactions = {};
+          for (const [msgIdStr, emojiGroup] of Object.entries(reactionMap)) {
+            const msgId = parseInt(msgIdStr);
+            structured[msgId] = Object.entries(emojiGroup).map(([emoji, users]) => ({
+              emoji,
+              users,
+            }));
+          }
+          setMessageReactions(structured);
         });
-        const data = await res.json();
-        result[msg.id] = data.readers || [];
-      }
-      setMessageReads(result);
-    } catch (err) {
-      console.error("讀取 messageReads 時發生錯誤", err);
-    }
-  };
+    }, [roomId, token]);
 
+ // WebSocket 接続を確立し、メッセージイベントを監視
   useEffect(() => {
     if (!roomId || !token) return;
     if (wsRef.current) wsRef.current.close();
@@ -125,12 +305,12 @@ export default function GroupChatRoomContent() {
       fetch(`http://localhost:8081/rooms/${roomId}/enter`, {
         method: "POST",
         credentials: "include",
-      });
+      })
     };
-
+    
     ws.onmessage = (event) => {
       const parsed = JSON.parse(event.data);
-      console.log("💬 收到訊息：", parsed);
+      // console.log("💬 收到訊息：", parsed);
       if (parsed.type === "read_update" && parsed.message_id) {
         setMessageReads((prev) => ({ ...prev, [parsed.message_id]: parsed.readers || [] }));
       }
@@ -141,7 +321,7 @@ export default function GroupChatRoomContent() {
         const msg = parsed.message;
         const content = msg.content || "";
 
-        // ✅ 是 reaction 則處理並 return，不再加入 messages
+        // 内容が "reaction:" で始まる場合、それはリアクションです。
         if (content.startsWith("reaction:")) {
           const [, emoji, targetIdStr] = content.split(":");
           const targetId = parseInt(targetIdStr);
@@ -149,21 +329,18 @@ export default function GroupChatRoomContent() {
 
           setMessageReactions((prev) => {
             const oldList = prev[targetId] || [];
-
-            // 移除該用戶所有 reaction（不論是什麼 emoji）
+            // このユーザーがつけたすべてのリアクションを削除します
             const cleaned = oldList.map((r) => ({
               ...r,
               users: r.users.filter((u) => u !== sender),
             })).filter((r) => r.users.length > 0);
 
-            // 查這次點的 emoji，之前是否有存在（點同一個表示取消）
+            // もしユーザーがすでに同じ絵文字を付けていれば、今回のクリックは「取り消し」とみなされます。
             const hadSameEmojiBefore = oldList.some((r) => r.emoji === emoji && r.users.includes(sender));
-
+            //キャンセルの場合は追加しません。それ以外なら、絵文字にこのユーザーを追加します。
             if (hadSameEmojiBefore) {
-              // 同 emoji 且點了 → 視為取消，不加回去
               return { ...prev, [targetId]: cleaned };
             } else {
-              // 是新的 emoji reaction → 加上
               const updatedEmoji = cleaned.find((r) => r.emoji === emoji);
               if (updatedEmoji) {
                 updatedEmoji.users.push(sender);
@@ -174,54 +351,44 @@ export default function GroupChatRoomContent() {
             }
           });
 
-          return; // ✅ 阻止該 reaction 進入普通訊息流
+          return; 
         }
+        
+        setMessages((prev) => {
+          const newMessages = [...prev];
 
-      //   // ✅ 普通訊息才進入聊天列表
-      //   setMessages((prev) => [
-      //     ...prev,
-      //     {
-      //       id: msg.id,
-      //       sender: msg.sender,
-      //       content: msg.content,
-      //       thread_root_id: msg.thread_root_id, 
-      //       attachment: msg.attachment || undefined,
-      //     },
-      //   ]);
-      // }
-       setMessages((prev) => {
-        const newMessages = [...prev];
+          // スレッド返信（引用）の場合、親メッセージが存在しなければ parent_message を追加します。
+          if (msg.thread_root_id) {
+            const hasParent = prev.some((m) => m.id === msg.thread_root_id);
 
-        // 如果这条消息是子消息（thread），就检查 parent 是否已存在
-        if (msg.thread_root_id) {
-          const hasParent = prev.some((m) => m.id === msg.thread_root_id);
-
-          // 如果没有 parent，而且服务器有发 parent_message，就补上
-          if (!hasParent && parsed.parent_message) {
-            newMessages.push({
-              id: parsed.parent_message.id,
-              sender: parsed.parent_message.sender,
-              content: parsed.parent_message.content,
-              thread_root_id: parsed.parent_message.thread_root_id,
-              attachment: parsed.parent_message.attachment || undefined,
-            });
+            // スレッド返信（引用）の場合、親メッセージが存在しなければ parent_message を追加します。
+            if (!hasParent && parsed.parent_message) {
+              newMessages.push({
+                id: parsed.parent_message.id,
+                sender: parsed.parent_message.sender,
+                content: parsed.parent_message.content,
+                thread_root_id: parsed.parent_message.thread_root_id,
+                attachment: parsed.parent_message.attachment || undefined,
+              });
+            }
           }
-        }
 
-        // 最后加入当前消息本身
-        newMessages.push({
-          id: msg.id,
-          sender: msg.sender,
-          content: msg.content,
-          thread_root_id: msg.thread_root_id,
-          attachment: msg.attachment || undefined,
+          // 新しいメッセージも必ず追加する
+          newMessages.push({
+            id: msg.id,
+            sender: msg.sender,
+            content: msg.content,
+            thread_root_id: msg.thread_root_id,
+            attachment: msg.attachment || undefined,
+          });
+
+          return newMessages;
         });
+        return;
+      }
+    
 
-        return newMessages;
-      });
-    }
-
-        // ✅ 新增：处理提及通知
+      //mention機能 
       if (parsed.type === "mention_notify") {
         if (parsed.to_user && parsed.to_user === currentUserId) {
           alert(`🔔 ${parsed.from} さんにメンションされました: ${parsed.content}`);
@@ -268,7 +435,6 @@ export default function GroupChatRoomContent() {
                 const [, emoji, targetIdStr] = m.content.split(":");
                 const targetId = parseInt(targetIdStr);
 
-                // 初始化结构
                 if (!reactionMap[targetId]) {
                   reactionMap[targetId] = {};
                 }
@@ -279,18 +445,15 @@ export default function GroupChatRoomContent() {
 
                 const previousEmoji = userEmojiMap[targetId][m.sender];
 
-                // 如果点的是同一个 emoji（即重复点）→ 视为取消
                 if (previousEmoji === emoji) {
-                  // 取消原来的 emoji
+                  //すでに👍を押していて、もう一度押すと解除になる
                   reactionMap[targetId][emoji] = reactionMap[targetId][emoji]?.filter((u) => u !== m.sender);
                   delete userEmojiMap[targetId][m.sender];
                 } else {
-                  // 替换掉旧 reaction（如果存在）
                   if (previousEmoji) {
                     reactionMap[targetId][previousEmoji] = reactionMap[targetId][previousEmoji]?.filter((u) => u !== m.sender);
                   }
 
-                  // 新 reaction 插入
                   if (!reactionMap[targetId][emoji]) {
                     reactionMap[targetId][emoji] = [];
                   }
@@ -308,11 +471,9 @@ export default function GroupChatRoomContent() {
               }
             }
 
-
-            // 更新訊息內容
             setMessages(normalMessages);
 
-            // 將 reactionMap 轉換成符合 UI 結構的 messageReactions
+            //  作成したリアクション情報を状態に反映させて、UI を更新します。
             const messageReactions: Record<number, { emoji: string; users: string[] }[]> = {};
 
             for (const id in reactionMap) {
@@ -321,11 +482,10 @@ export default function GroupChatRoomContent() {
                 .filter(([, users]) => users.length > 0)
                 .map(([emoji, users]) => ({ emoji, users }));
             }
-
             setMessageReactions(messageReactions);
-
           });
-
+        
+        return;
       }
     };
 
@@ -335,64 +495,40 @@ export default function GroupChatRoomContent() {
     return () => ws.close();
   }, [roomId, token]);
 
+ //メッセージ更新時に自動スクロール
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
-
+ 
+  //メッセージが変更されたら自動で既読にする
   useEffect(() => {
     if (!messages || !token || !currentUser) return;
-    const lastMsg = messages[messages.length - 1];
     messages.forEach((msg) => {
-      // const isSelfLastMsg = msg.id === lastMsg?.id && msg.sender === currentUser;
-      // if (!isSelfLastMsg) {
-      //   fetch(`http://localhost:8081/messages/${msg.id}/markread`, {
-      //     method: "POST",
-      //     credentials: "include",
-      //   });
-      // }
-      fetch(`http://localhost:8081/messages/${msg.id}/markread`, {
-        method: "POST",
-        credentials: "include",
-      });
+      if (
+        msg.sender !== currentUser &&
+        !msg.content.startsWith("reaction:") 
+      ) {
+        fetch(`http://localhost:8081/messages/${msg.id}/markread`, {
+          method: "POST",
+          credentials: "include",
+        }).catch((err) => console.error("既読マーク失敗", err));
+      }
     });
   }, [messages, currentUser, token]);
 
-  const handleSend = async () => {
-    const parsedRoomId = parseInt(roomId as string);
-    if (!message.trim() || !token || isNaN(parsedRoomId)) return;
-   ////////
-    const mentionRegex = /@(\w+)/g;
-    const foundMentions = [...message.matchAll(mentionRegex)].map(m => m[1]);4
-    //////
 
-    await fetch("http://localhost:8081/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-       body: JSON.stringify({
-        room_id: parsedRoomId,
-        content: message,
-        thread_root_id: replyTo?.id ?? null, // ✅ 設定 parent message id
-        mentions: foundMentions,
-      }),
-    });
-    setMessage("");
-    setReplyTo(null); // ✅ 清空 reply 狀態
-    setMentions([]);
-  };
-///////////////////////
+
+  //外側クリックでメニューを閉じる
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as Node;
 
-      // 遍历所有菜单浮出的 ref
       for (const [, ref] of actionBoxRefs.current) {
         if (ref && ref.contains(target)) {
-          return; // 点在菜单内部，不关闭
+          return; 
         }
       }
 
-      // 点在外部，关闭菜单
       setActionBoxVisible(null);
     };
 
@@ -401,108 +537,6 @@ export default function GroupChatRoomContent() {
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, []);
-
-/////////////////////////
-
-  const handleLeaveGroup = async () => {
-    if (!roomId || !token) return;
-
-    // ✅ 先关闭 WebSocket
-    wsRef.current?.close();
-
-    const res = await fetch(`http://localhost:8081/rooms/${roomId}/leave`, {
-      method: "POST",
-      credentials: "include",
-    });
-    if (res.ok) {
-      alert("退室しました");
-      router.push("/chatroom");
-    } else {
-      alert("退室失敗しました");
-    }
-  };
-
-  ///revoke
-  const handleRevoke = async (msgId: number) => {
-    const res = await fetch(`http://localhost:8081/messages/${msgId}/revoke`, {
-      method: "POST",
-      credentials: "include",
-    });
-    if (res.ok) {
-      setMessages(prev => prev.filter(m => m.id !== msgId));
-      actionBoxRefs.current.delete(msgId); // ← 清理对应引用
-    } else {
-      alert("撤回に失敗しました（2分以上経過した可能性があります）");
-    }
-  };
-   //hide
-  const handleHide = async (msgId: number) => {
-    const res = await fetch(`http://localhost:8081/messages/${msgId}/hide`, {
-      method: "POST",
-      credentials: "include",
-    });
-    if (res.ok) {
-      setMessages(prev => prev.filter(m => m.id !== msgId));
-      actionBoxRefs.current.delete(msgId); // ← 清理对应引用
-    } else {
-      alert("削除に失敗しました");
-    }
-  };
-
-  const handleReaction = async (targetMessageId: number, emoji: string) => {
-    await fetch("http://localhost:8081/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({
-        room_id: parseInt(roomId!),
-        content: `reaction:${emoji}:${targetMessageId}`,
-        thread_root_id: null,
-        mentions: [],
-      }),
-    });
-  };
-
-  ////image
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !roomId ) return;
-
-    const reader = new FileReader();
-    reader.onload = () => setPreviewImage(reader.result as string);
-    reader.readAsDataURL(file);
-
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("room_id", roomId.toString());
-    formData.append("type", "image");
-
-    await fetch("http://localhost:8081/messages/upload", {
-      method: "POST",
-      credentials: "include",
-      body: formData,
-    });
-
-    setPreviewImage(null);
-  };
-
-  ////file
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !roomId) return;
-
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("room_id", roomId.toString());
-    formData.append("type", "file");
-
-    await fetch("http://localhost:8081/messages/upload", {
-      method: "POST",
-      credentials: "include",
-      body: formData,
-    });
-  };
-
 
   return (
     <div className="h-screen flex flex-col overflow-hidden" onClick={() => setActionBoxVisible(null)}>

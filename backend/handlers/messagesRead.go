@@ -26,6 +26,21 @@ func (s *Server) MarkMessageAsReadHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	var content string
+	err = s.DB.QueryRow("SELECT content FROM messages WHERE id = $1", messageID).Scan(&content)
+	if err != nil {
+		http.Error(w, "メッセージの取得に失敗しました", http.StatusInternalServerError)
+		return
+	}
+	if len(content) >= 9 && content[:9] == "reaction:" {
+		// 如果是 reaction，跳过写入及广播
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": "リアクションは既読対象ではありません",
+		})
+		return
+	}
+
 	// メッセージが属するルームIDを取得
 	var roomID int
 	err = s.DB.QueryRow("SELECT room_id FROM messages WHERE id = $1", messageID).Scan(&roomID)
@@ -118,6 +133,7 @@ func (s *Server) GetUnreadMessageCountHandler(w http.ResponseWriter, r *http.Req
 		FROM messages m
 		WHERE m.room_id = $1
 		AND m.sender_id != $2
+		AND NOT m.content LIKE 'reaction:%'
 		AND NOT EXISTS (
 			SELECT 1 FROM message_reads mr 
 			WHERE mr.message_id = m.id AND mr.user_id = $2
@@ -177,6 +193,7 @@ func (s *Server) GetUnreadMapForRoom(roomID int) map[int]int {
 		JOIN messages m ON m.room_id = rm.room_id
 		WHERE rm.room_id = $1
 		  AND m.sender_id != rm.user_id
+			AND NOT m.content LIKE 'reaction:%'
 		  AND NOT EXISTS (
 		    SELECT 1 FROM message_reads r
 		    WHERE r.message_id = m.id AND r.user_id = rm.user_id
