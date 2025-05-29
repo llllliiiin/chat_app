@@ -90,25 +90,6 @@ func (s *Server) GetMentionsForUser(userID int) ([]int, error) {
 	return messageIDs, nil
 }
 
-// GetMentionNotificationsHandler exposes a REST API for fetching mentions for current user
-func (s *Server) GetMentionNotificationsHandler(w http.ResponseWriter, r *http.Request) {
-	userID, err := utils.GetUserIDFromToken(r)
-	if err != nil {
-		http.Error(w, "未ログイン", http.StatusUnauthorized)
-		return
-	}
-
-	messageIDs, err := s.GetMentionsForUser(userID)
-	if err != nil {
-		http.Error(w, "取得失敗", http.StatusInternalServerError)
-		return
-	}
-
-	json.NewEncoder(w).Encode(map[string]any{
-		"mentioned_message_ids": messageIDs,
-	})
-}
-
 // GET /mention-notifications
 func (s *Server) GetMentionNotifications(w http.ResponseWriter, r *http.Request) {
 	userID, err := utils.GetUserIDFromToken(r)

@@ -85,27 +85,25 @@ func (s *Server) SendMessageHandler(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	// 发送新消息后，获取未读 map 并广播
-	unreadMap := s.GetUnreadMapForRoom(req.RoomID)
+	if len(req.Content) < 9 || req.Content[:9] != "reaction:" {
+		unreadMap := s.GetUnreadMapForRoom(req.RoomID)
 
-	// ✅ 通知聊天室内成员
-	s.WSHub.Broadcast <- WSMessage{
-		RoomID: req.RoomID,
-		Data: map[string]any{
-			"type":       "unread_update",
-			"room_id":    req.RoomID,
-			"unread_map": unreadMap,
-		},
-	}
-
-	// ✅ 同步推送到 room_id = 0（聊天室首页）
-	s.WSHub.Broadcast <- WSMessage{
-		RoomID: 0,
-		Data: map[string]any{
-			"type":       "unread_update",
-			"room_id":    req.RoomID,
-			"unread_map": unreadMap,
-		},
+		s.WSHub.Broadcast <- WSMessage{
+			RoomID: req.RoomID,
+			Data: map[string]any{
+				"type":       "unread_update",
+				"room_id":    req.RoomID,
+				"unread_map": unreadMap,
+			},
+		}
+		s.WSHub.Broadcast <- WSMessage{
+			RoomID: 0,
+			Data: map[string]any{
+				"type":       "unread_update",
+				"room_id":    req.RoomID,
+				"unread_map": unreadMap,
+			},
+		}
 	}
 
 	log.Println("✅ データベースへの書き込みとブロードキャスト成功") // 資料庫寫入與廣播成功

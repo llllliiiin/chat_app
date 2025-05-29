@@ -72,7 +72,7 @@ func main() {
 	r.Handle("/me", middleware.JWTAuthMiddleware(http.HandlerFunc(s.GetMeHandler))).Methods("GET")
 	//tokenの削除
 	r.Handle("/logout", http.HandlerFunc(s.LogoutHandler)).Methods("POST")
-	r.Handle("/mentions", middleware.JWTAuthMiddleware(http.HandlerFunc(s.GetMentionNotificationsHandler))).Methods("GET")
+	// r.Handle("/mentions", middleware.JWTAuthMiddleware(http.HandlerFunc(s.GetMentionNotificationsHandler))).Methods("GET")
 	r.Handle("/mention-notifications", middleware.JWTAuthMiddleware(http.HandlerFunc(s.GetMentionNotifications))).Methods("GET")
 	r.Handle("/downloads/{filename}", middleware.JWTAuthMiddleware(http.HandlerFunc(s.DownloadAttachmentHandler))).Methods("GET")
 
