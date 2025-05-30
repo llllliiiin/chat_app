@@ -60,9 +60,19 @@ export default function ChatRoomWithUserPage() {
       credentials: "include",
     });
 
-    if (!res.ok) throw new Error("ルーム取得失敗");
+    if (!res.ok) {
+      const text = await res.text();
+      console.error("❌ oneroom 取得失敗:", text);
+      throw new Error("ルーム取得失敗");
+    }
+
 
     const allRooms: RoomInfo[] = await res.json();
+
+    if (!Array.isArray(allRooms)) {
+      // console.error("❌ allRooms 非配列:", allRooms);
+      return;
+    }
     const matchedRooms = allRooms.filter((room) => !room.is_group);
     setGroupRooms(matchedRooms);
 

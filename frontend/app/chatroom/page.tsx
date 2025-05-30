@@ -37,6 +37,10 @@ export default function ChatRoomListPage() {
 
     const rooms = await res.json();
 
+    if (!Array.isArray(rooms)) {
+      // console.error("❌ rooms 非数组格式：", rooms);
+      return;
+    }
     const groupRooms = rooms.filter(
       (r: any) => r.is_group && defaultGroupNames.includes(r.room_name)
     );
