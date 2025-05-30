@@ -27,19 +27,19 @@ export default function RegisterPage() {
       });
 
       if (res.ok) {
-        alert("注册成功！");
+        alert("サンアップ成功！");
         setUsername("");
         setPassword("");
         router.push("/login");
       } else if (res.status === 409) {
-        alert("该用户名已存在，请直接登录！");
+        alert("ユーザーはもう存在している！");
         router.push("/login");
       } else {
         const errMsg = await res.text();
-        alert("注册失败！原因：" + errMsg);
+        alert("失敗しました！原因：" + errMsg);
       }
     } catch (error) {
-      alert("连接服务器失败！");
+      alert("サーバーと接続できない！");
       console.error("fetch error:", error);
     }
   };
